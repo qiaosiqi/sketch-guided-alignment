@@ -207,10 +207,11 @@ python -m v2.scripts.08_eval --problems_jsonl out/apps/test.jsonl \
 | SFT-PASS-25 | `--sort_by pass_ratio --top_p 25` |
 | SFT-ALG-25 | `--sort_by algo_final --top_p 25` |
 | SFT-ALG-100 | `--sort_by algo_final --top_p 100` |
-| DPO-HvL | `--task hvl`(从 SFT-ALG-25 继续) |
+| DPO-HvL | `--task hvl`(从 SFT-ALG-25 继续,partial-credit 主信号) |
+| DPO-PvF | `--task pvf`(binary 退化:1.0 vs 0.0,作 HvL 的 ablation) |
 | DPO-QvS | `--task qvs` |
 | DPO-GvB | `--task gvb` (主实验) |
-| DPO-ALL | `--task all` |
+| DPO-ALL | `--task all`(不含 pvf;pvf 只用作消融) |
 
 ---
 

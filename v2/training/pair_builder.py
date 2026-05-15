@@ -2,10 +2,12 @@
 DPO 偏好对构造(partial-credit 版)。
 
 Tasks:
-    hvl  — High vs Low pass_ratio
+    hvl  — High vs Low pass_ratio(partial-credit 主信号)
+    pvf  — Pass vs Fail(binary 退化:pass_ratio == 1.0 vs == 0.0,作 HvL 的消融对照)
     qvs  — Quick vs Slow runtime,前提两者 pass_ratio == 1.0
     gvb  — Good vs Bad algorithm score,前提两者 pass_ratio >= θ_pass_gvb
     all  — 从 hvl/qvs/gvb 三类里能构造出哪种就用哪种(随机回退)
+           注意:`all` 不包含 pvf,pvf 是与 hvl 二选一的 ablation,不混入正信号
 
 接口:
     sample_pair(candidates, task, thresholds, rng) -> (chosen, rejected) | None
@@ -19,7 +21,7 @@ from dataclasses import dataclass
 from typing import Optional, Literal
 
 
-Task = Literal["hvl", "qvs", "gvb", "all"]
+Task = Literal["hvl", "pvf", "qvs", "gvb", "all"]
 
 
 @dataclass
@@ -40,6 +42,19 @@ def sample_hvl(candidates: list[dict], th: PairThresholds, rng: random.Random):
     hi = [c for c in candidates if c["pass_ratio"] >= th.theta_high]
     lo = [c for c in candidates if c["pass_ratio"] <= th.theta_low]
     return _sample_two(rng, hi, lo)
+
+
+def sample_pvf(candidates: list[dict], th: PairThresholds, rng: random.Random):
+    """Binary PvF baseline: chosen.pass_ratio == 1.0 vs rejected.pass_ratio == 0.0.
+
+    退化版 HvL,用 partial-credit 之前 Code-Optimise 风格的"全过 vs 全挂"作信号。
+    `th` 在 PvF 下不参与;保留参数签名只为 sample_pair 统一调度。
+    论文里作为 HvL 的 ablation,用于验证 binary → continuous 这一改造本身的收益。
+    """
+    del th
+    pass_full = [c for c in candidates if c["pass_ratio"] == 1.0]
+    fail_total = [c for c in candidates if c["pass_ratio"] == 0.0]
+    return _sample_two(rng, pass_full, fail_total)
 
 
 def sample_qvs(candidates: list[dict], th: PairThresholds, rng: random.Random):
@@ -73,12 +88,14 @@ def sample_pair(
     rng = rng or random
     if task == "hvl":
         return sample_hvl(candidates, thresholds, rng)
+    if task == "pvf":
+        return sample_pvf(candidates, thresholds, rng)
     if task == "qvs":
         return sample_qvs(candidates, thresholds, rng)
     if task == "gvb":
         return sample_gvb(candidates, thresholds, rng)
     if task == "all":
-        # 随机次序尝试三种,第一个成功就返回
+        # 随机次序尝试三种,第一个成功就返回。pvf 是 ablation 不参与 all。
         order = ["hvl", "qvs", "gvb"]
         rng.shuffle(order)
         for t in order:

@@ -28,7 +28,7 @@ def parse_args():
     ap.add_argument("--model_path", required=True)
     ap.add_argument("--output_dir", required=True)
 
-    ap.add_argument("--task", required=True, choices=["hvl", "qvs", "gvb", "all"])
+    ap.add_argument("--task", required=True, choices=["hvl", "pvf", "qvs", "gvb", "all"])
     ap.add_argument("--augment", default="True", choices=["True", "False"],
                     help="True=动态采样 pair;False=静态")
 

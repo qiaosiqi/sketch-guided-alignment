@@ -6,7 +6,7 @@
 2. **Partial credit 主信号**:`pass_ratio ∈ [0,1]` 替代二元 pass/fail
 3. **两段式采样,一段式训练**:采样时分别生成 sketch 和 code(各自评分更准),训练时拼成一段式格式
 4. **多维度评分**:sketch 4 维 + code 5 维,各 0-10,加权求总分
-5. **偏好对重定义**:HvL (High vs Low pass_ratio)、QvS (Quick vs Slow,仅在 pass_ratio=1.0 内比)、GvB (Good vs Bad algorithm score,需 pass_ratio ≥ 阈值)
+5. **偏好对重定义**:HvL (High vs Low pass_ratio)、QvS (Quick vs Slow,仅在 pass_ratio=1.0 内比)、GvB (Good vs Bad algorithm score,需 pass_ratio ≥ 阈值);另保留 PvF (Pass vs Fail,二元 1.0/0.0) 作 HvL 的 ablation 对照
 6. **技术栈升级**:trl/transformers/peft 当前稳定版,采样用 vllm
 
 ---
@@ -61,6 +61,7 @@ APPS raw
 对一道题的候选解集合 $\mathcal{Y}(x)$,每个 $y \in \mathcal{Y}$ 有 `(pass_ratio, runtime, algorithm_score)` 三元组。
 
 - **HvL**:从 $\{y : \text{pass\_ratio} \geq \theta_\text{high}\}$ 中抽 $y_w$,从 $\{y : \text{pass\_ratio} \leq \theta_\text{low}\}$ 中抽 $y_l$
+- **PvF**(ablation):从 $\{y : \text{pass\_ratio} = 1.0\}$ 中抽 $y_w$,从 $\{y : \text{pass\_ratio} = 0.0\}$ 中抽 $y_l$。不受任何阈值控制,作为 HvL 的二元退化对照
 - **QvS**:从 $\{y : \text{pass\_ratio} = 1.0\}$ 中按 runtime 升序排,抽前段为 $y_w$、后段为 $y_l$
 - **GvB**:从 $\{y : \text{pass\_ratio} \geq \theta_\text{pass\_gvb}\}$ 中按 algorithm_score 分 $\mathcal{G} = \{\cdot \geq \tau\}$、$\mathcal{B} = \{\cdot < \tau\}$,各抽一个
 
