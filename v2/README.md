@@ -2,7 +2,7 @@
 
 第二版框架,在原 `sketch-guided-alignment/` 论文方法基础上做以下扩展:
 
-1. **数据集换 APPS Competition+Interview**(替代 MBPP),约 2360 训练题
+1. **数据集换 APPS Interview**(替代 MBPP);competition 难度因基础模型通过率近零、无法构造偏好对而排除
 2. **Partial credit 主信号**:`pass_ratio ∈ [0,1]` 替代二元 pass/fail
 3. **两段式采样,一段式训练**:采样时分别生成 sketch 和 code(各自评分更准),训练时拼成一段式格式
 4. **多维度评分**:sketch 4 维 + code 5 维,各 0-10,加权求总分
@@ -22,7 +22,7 @@
 | 输出长度 | 1024 tokens | 超 10% 截断再升 2048 |
 | `θ_high` (HvL 高分阈值) | 0.7 | pass_ratio 高于此算 high |
 | `θ_low` (HvL 低分阈值) | 0.3 | pass_ratio 低于此算 low |
-| `θ_pass_gvb` | 0.8 | GvB 双方都得满足的最低 pass_ratio |
+| `θ_pass_gvb` | 0.5 | GvB 双方都得满足的最低 pass_ratio |
 | `τ` (GvB 算法分阈值) | 6.0 | 总分 ≥ τ 为 Good,< τ 为 Bad |
 | Sketch / Code 权重 | 0.4 / 0.6 | `final = 0.4·mean(S) + 0.6·mean(C)` |
 | Train/Val split | 9:1 (在 APPS train 内) | 随机划分,固定 seed |

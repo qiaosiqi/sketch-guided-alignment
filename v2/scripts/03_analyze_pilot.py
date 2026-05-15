@@ -29,7 +29,7 @@ def load_jsonl(path: str) -> list[dict]:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--pilot_dir", required=True)
-    ap.add_argument("--theta_pass_gvb", type=float, default=0.8)
+    ap.add_argument("--theta_pass_gvb", type=float, default=0.5)
     args = ap.parse_args()
 
     sketches = load_jsonl(os.path.join(args.pilot_dir, "sketches.jsonl"))

@@ -154,9 +154,9 @@ def test_qvs_runtime_missing_ignored(th, rng):
 def test_gvb_basic(th, rng):
     cands = [
         _a(1.0, 100.0, 8.5),    # G
-        _a(0.9, None, 7.0),     # G (pass_ratio >= 0.8)
+        _a(0.9, None, 7.0),     # G (pass_ratio >= 0.5)
         _a(0.85, None, 4.0),    # B
-        _a(0.5, None, 3.0),     # 不合格,pass_ratio < 0.8
+        _a(0.5, None, 3.0),     # B (pass_ratio = 0.5,刚好达标,算法分低)
     ]
     pair = sample_pair(cands, "gvb", th, rng)
     assert pair is not None

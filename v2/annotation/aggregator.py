@@ -89,7 +89,8 @@ def batch_annotate(
         - parsed_ok=False 的 code 跳过(但写一条 final=-1 的占位)
         - pass_ratio < pass_threshold 的也跳过评分(写 final=-1 占位)
         默认 pass_threshold=0,意味着只要 code 跑得起来就评分。
-        若想只评"真正通过大部分测试"的 code(节约 API),把 pass_threshold 设为 0.8。
+        若想节约 API,把 pass_threshold 设为 0.5(与 θ_pass_gvb 对齐:
+        GvB 候选恰好全覆盖,且不多评一份)。
     """
     # 读 exec 结果,索引 (task_id, sample_id, code_id) -> pass_ratio
     exec_idx: dict[tuple, float] = {}

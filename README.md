@@ -7,11 +7,11 @@
 | 路径 | 角色 |
 |---|---|
 | `sketch-guided-alignment/` | 原论文(Code-Optimise + 论文初稿)的参考实现,**仅作对照**,不维护 |
-| `v2/` | 重写的当前框架,目标 **APPS Competition + Interview**,**partial-credit pass_ratio** 主信号,**两段式 sketch+code 采样**,9 维评分,HvL / QvS / GvB DPO pair |
+| `v2/` | 重写的当前框架,目标 **APPS Interview**,**partial-credit pass_ratio** 主信号,**两段式 sketch+code 采样**,9 维评分,HvL / QvS / GvB DPO pair |
 | `论文/` | 论文草稿 PDF |
 
 **新论文方向**(在 v2 上做的工作,与参考论文的区别):
-1. 数据集从 MBPP 换成 APPS Competition+Interview(更难,更适合考验算法质量信号)
+1. 数据集从 MBPP 换成 APPS Interview(比 MBPP 难,更适合考验算法质量信号;competition 因通过率近零被排除)
 2. 评测引入 `pass_ratio ∈ [0, 1]` 连续主信号,替代 binary pass/fail
 3. 采样改两段式(先 sketch、后 code),sketch 与 code 分开评分
 4. Judge rubric 改成 9 维细粒度(4 维 sketch + 5 维 code),加权聚合
@@ -72,7 +72,7 @@ python -m v2.scripts.01_prepare_apps \
     --apps_root data/APPS/raw \
     --out_dir out/apps
 # 产物:out/apps/{train,val,test}.jsonl
-# 过滤后 train ≈ 2200 题(Competition+Interview),val ≈ 240,test ≈ 2400
+# 过滤后只保留 interview 难度;train/val/test 实际题数以本步骤打印的统计为准
 ```
 
 ### 2.2 Pilot 验证(~30-60 分钟,vllm)
@@ -112,21 +112,21 @@ python -m v2.scripts.02_sample_pilot \
 
 **关键参数 `--pass_threshold`**:只评 pass_ratio ≥ 此值的解,省 API 钱。
 - `0.0`:全评(最贵,得到完整分布)
-- `0.8`:推荐(只评接近 GvB 候选的解,API 调用量砍 60-80%)
+- `0.5`:推荐,与 `θ_pass_gvb=0.5` 严格对齐 —— 所有可能进 GvB 的解恰好都被评分,且不会多评一份(低于 0.5 的解 GvB 用不到)
 
 ```bash
 python -m v2.scripts.04_annotate \
     --problems_jsonl out/apps/train.jsonl \
     --sample_dir out/sample_train \
-    --pass_threshold 0.8 --alpha 0.4
+    --pass_threshold 0.5 --alpha 0.4
 
 python -m v2.scripts.04_annotate \
     --problems_jsonl out/apps/val.jsonl \
     --sample_dir out/sample_val \
-    --pass_threshold 0.8 --alpha 0.4
+    --pass_threshold 0.5 --alpha 0.4
 ```
 
-API 调用粗算:`2360 题 × 100 解 × 2 次调用 ≈ 47 万次`(`pass_threshold=0`)。设 `0.8` 后约 8-15 万次。中断重跑会续。
+API 调用粗算:`训练题数 × 100 解 × 2 次调用`(`pass_threshold=0`,全评)。设 `0.5` 后按解的通过率分布大致砍到 1/3~1/5。中断重跑会续。
 
 ### 2.5 合并训练数据(分钟级)
 
@@ -237,7 +237,7 @@ python -m v2.scripts.08_eval --problems_jsonl out/apps/test.jsonl \
 | `RuntimeError: no kernel image is available` (vllm) | V100 不支持某些算子,环境变量 `VLLM_ATTENTION_BACKEND=XFORMERS` 或回退 `--prefer_backend hf` |
 | `bf16 not supported` | V100 不支持 bf16,确认 config 是 `fp16=True, bf16=False` |
 | OOM at DPO | 加 `--use_lora`,或减 `--per_device_train_batch_size 1 --gradient_accumulation_steps 32` |
-| 评分太慢 | 提高 `--pass_threshold 0.8`,或写并发 wrapper 提速 |
+| 评分太慢 | 确认 `--pass_threshold 0.5`(别用 0.0 全评),或写并发 wrapper 提速 |
 | `signal.SIGALRM` AttributeError | 在 Windows 上跑 execution → 必须用 Linux |
 | 模型 import trust_remote_code 警告 | StarCoder2 需要 `trust_remote_code=True`,代码已设 |
 

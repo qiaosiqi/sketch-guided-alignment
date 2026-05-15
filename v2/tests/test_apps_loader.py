@@ -8,7 +8,7 @@ def test_load_one_fncall(fake_apps_root):
     assert p.task_id == "apps_train_0001"
     assert p.io_format == "fncall"
     assert p.fn_name == "twice"
-    assert p.difficulty == "competition"
+    assert p.difficulty == "interview"
     assert p.starter_code is not None
 
 
@@ -25,12 +25,17 @@ def test_load_one_introductory_filtered(fake_apps_root):
     assert p is None   # introductory 被过滤掉
 
 
+def test_load_one_competition_filtered(fake_apps_root):
+    p = load_one(fake_apps_root / "train" / "0004", split="train")
+    assert p is None   # competition 也被过滤,只保留 interview
+
+
 def test_iter_split(fake_apps_root):
     probs = list(iter_split(fake_apps_root, "train"))
-    # 应该只剩 0001 + 0002
+    # introductory(0003)与 competition(0004)被过滤,只剩 0001 + 0002
     assert len(probs) == 2
     diffs = sorted(p.difficulty for p in probs)
-    assert diffs == ["competition", "interview"]
+    assert diffs == ["interview", "interview"]
 
 
 def test_load_train_val_split(fake_apps_root):

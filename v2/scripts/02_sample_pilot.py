@@ -44,16 +44,15 @@ def load_problems(path: str) -> list[Problem]:
 
 
 def select_pilot_problems(all_probs: list[Problem], n: int, seed: int) -> list[Problem]:
-    """难度分层抽样:50 % competition + 50 % interview(如果不够就按比例补)。"""
-    comp = [p for p in all_probs if p.difficulty == "competition"]
-    intv = [p for p in all_probs if p.difficulty == "interview"]
+    """从面试级问题中随机抽 n 道作 pilot。
+
+    数据集已只含 interview(competition 通过率近零被排除,见 apps_loader),
+    故不再做难度分层,直接固定 seed 随机抽样。
+    """
+    pool = list(all_probs)
     rng = random.Random(seed)
-    rng.shuffle(comp)
-    rng.shuffle(intv)
-    n_each = n // 2
-    chosen = comp[:n_each] + intv[:n - n_each]
-    rng.shuffle(chosen)
-    return chosen
+    rng.shuffle(pool)
+    return pool[:n]
 
 
 def run_executions(codes_path: str, problems_by_id: dict[str, Problem], out_path: str):

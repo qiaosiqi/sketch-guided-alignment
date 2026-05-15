@@ -35,7 +35,7 @@ def parse_args():
     # pair 阈值
     ap.add_argument("--theta_high", type=float, default=0.7)
     ap.add_argument("--theta_low", type=float, default=0.3)
-    ap.add_argument("--theta_pass_gvb", type=float, default=0.8)
+    ap.add_argument("--theta_pass_gvb", type=float, default=0.5)
     ap.add_argument("--tau", type=float, default=6.0)
 
     # DPO 训练超参

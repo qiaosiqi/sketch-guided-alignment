@@ -57,10 +57,11 @@ def stdio_problem() -> Problem:
 @pytest.fixture
 def fake_apps_root(tmp_path: Path) -> Path:
     """
-    构造一个最小 APPS 目录结构,3 题:
-        train/0001  competition  fncall
-        train/0002  interview    stdio
+    构造一个最小 APPS 目录结构,4 题:
+        train/0001  interview     fncall
+        train/0002  interview     stdio
         train/0003  introductory(应被过滤)
+        train/0004  competition  (应被过滤,只保留 interview)
     """
     root = tmp_path / "apps_raw"
     train = root / "train"
@@ -76,7 +77,7 @@ def fake_apps_root(tmp_path: Path) -> Path:
         if starter:
             (d / "starter_code.py").write_text(starter, encoding="utf-8")
 
-    _make("0001", "competition",
+    _make("0001", "interview",
           {"fn_name": "twice", "inputs": [[3]], "outputs": [[6]]},
           "Twice the input.", "def twice(x):\n    ")
     _make("0002", "interview",
@@ -85,6 +86,9 @@ def fake_apps_root(tmp_path: Path) -> Path:
     _make("0003", "introductory",
           {"inputs": [["1"]], "outputs": [["1"]]},
           "Trivial.")
+    _make("0004", "competition",
+          {"inputs": [["9"]], "outputs": [["10"]]},
+          "Print n+1 (competition, should be filtered).")
 
     # 也建一个空 test 目录避免 iter_split 抛 FileNotFoundError
     (root / "test").mkdir()
@@ -125,7 +129,7 @@ def merged_two_problems(tmp_path: Path) -> Path:
         ],
     }
     p2 = {
-        "task_id": "p2", "difficulty": "competition", "io_format": "stdio",
+        "task_id": "p2", "difficulty": "interview", "io_format": "stdio",
         "question": "Q2", "fn_name": None,
         "answers": [
             _ans("a_g", "b_g", 1.0, 500.0, 7.5),

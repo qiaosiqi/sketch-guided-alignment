@@ -14,7 +14,8 @@ APPS 目录结构(每个 split):
     (注:有 starter_code.py 但 input_output 没 fn_name 的极少数情况,按 stdio 处理。)
 
 过滤逻辑:
-    - 只保留 difficulty in {"interview", "competition"}
+    - 只保留 difficulty == "interview"(competition 在试采样中通过率近零,
+      无法构造有效偏好对,已排除;introductory 太简单不纳入)
     - 跳过解析失败 / 无测试用例 的题
 """
 from __future__ import annotations

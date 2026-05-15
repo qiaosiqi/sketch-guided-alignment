@@ -31,7 +31,8 @@ def main():
     ap.add_argument("--problems_jsonl", required=True)
     ap.add_argument("--sample_dir", required=True, help="目录含 codes.jsonl, exec.jsonl;输出 scores.jsonl")
     ap.add_argument("--pass_threshold", type=float, default=0.0,
-                    help="只对 pass_ratio >= 此值的 code 评分。0 = 全部评。0.8 = 只评接近全 pass")
+                    help="只对 pass_ratio >= 此值的 code 评分。0 = 全部评。"
+                         "建议设为 0.5,与 θ_pass_gvb 对齐:GvB 候选全部被评分,且不多评一份")
     ap.add_argument("--alpha", type=float, default=0.4, help="sketch 权重(final = α·S + (1-α)·C)")
     ap.add_argument("--model", default="glm-4-air")
     ap.add_argument("--temperature", type=float, default=0.0)
