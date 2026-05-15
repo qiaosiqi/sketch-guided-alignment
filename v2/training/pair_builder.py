@@ -26,7 +26,7 @@ Task = Literal["hvl", "qvs", "gvb", "all"]
 class PairThresholds:
     theta_high: float = 0.7         # HvL 高分阈值
     theta_low: float = 0.3          # HvL 低分阈值
-    theta_pass_gvb: float = 0.8     # GvB 双方最低 pass_ratio
+    theta_pass_gvb: float = 0.5     # GvB 双方最低 pass_ratio
     tau: float = 6.0                # GvB 算法分阈值
 
 

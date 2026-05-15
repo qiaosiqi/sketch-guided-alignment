@@ -27,7 +27,7 @@ from typing import Iterable
 from .schema import Problem
 
 
-VALID_DIFFICULTIES = ("interview", "competition")
+VALID_DIFFICULTIES = ("interview",)
 
 
 def _read_text(p: Path) -> str | None:
