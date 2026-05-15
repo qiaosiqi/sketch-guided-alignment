@@ -19,7 +19,9 @@
 
 ---
 
-## 1. 快速部署(Linux 云主机,V100-32G)
+## 1. 快速部署(Linux 云主机,A800-80G 单卡;V100-32G 见排错表)
+
+> **A800-80G 单卡最小闭环**:只跑 BASE + SFT-ALG-25 + DPO-GvB。训练用 `v2/configs/ds_zero2.json`(ZeRO-2 无 offload + bf16,绝不 offload 到 CPU);采样/训练全程 bf16;评分 `04_annotate --concurrency 50`(GLM-4-Air 上限约 100);**eval 不加 `--do_timing`**——最小闭环不需要 runtime 信号,而那个 5 万次执行测 CoV 的昂贵路径只在 `--do_timing` 时触发,跳过它 18 核 CPU 就不是瓶颈。
 
 ```bash
 # --- 0. 克隆 ---
@@ -30,7 +32,7 @@ cd sketch-guided-alignment
 conda create -n sketch python=3.10 -y
 conda activate sketch
 
-# 核心依赖(V100 → CUDA 12.1 fp16 路线)
+# 核心依赖(A800/V100 同 CUDA 12.1;A800 走 bf16,V100 回退 fp16)
 pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cu121
 pip install transformers==4.45.2 datasets==2.20.0 accelerate==0.34.2
 pip install trl==0.11.4 peft==0.13.2 deepspeed==0.15.4
@@ -118,12 +120,12 @@ python -m v2.scripts.02_sample_pilot \
 python -m v2.scripts.04_annotate \
     --problems_jsonl out/apps/train.jsonl \
     --sample_dir out/sample_train \
-    --pass_threshold 0.5 --alpha 0.4
+    --pass_threshold 0.5 --alpha 0.4 --concurrency 50
 
 python -m v2.scripts.04_annotate \
     --problems_jsonl out/apps/val.jsonl \
     --sample_dir out/sample_val \
-    --pass_threshold 0.5 --alpha 0.4
+    --pass_threshold 0.5 --alpha 0.4 --concurrency 50
 ```
 
 API 调用粗算:`训练题数 × 100 解 × 2 次调用`(`pass_threshold=0`,全评)。设 `0.5` 后按解的通过率分布大致砍到 1/3~1/5。中断重跑会续。
@@ -153,7 +155,7 @@ deepspeed --num_gpus 1 -m v2.scripts.06_train_sft \
     --output_dir out/runs/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
     --num_train_epochs 10 \
-    --ds_config v2/configs/ds_zero3_offload.json
+    --ds_config v2/configs/ds_zero2.json   # A800-80G 单卡:ZeRO-2 无 offload + bf16
 
 # 对照实验:SPD(按 runtime),PASS(按 pass_ratio)
 # 只改 --sort_by 即可
@@ -169,7 +171,7 @@ deepspeed --num_gpus 1 -m v2.scripts.07_train_dpo \
     --model_path out/runs/sft_alg_top25 \
     --output_dir out/runs/dpo_gvb \
     --task gvb --augment True \
-    --ds_config v2/configs/ds_zero3_offload.json
+    --ds_config v2/configs/ds_zero2.json   # A800-80G 单卡:ZeRO-2 无 offload + bf16
 
 # 对照:HvL / QvS / ALL —— 只改 --task 和 --output_dir
 # 全参数 OOM 时加 --use_lora

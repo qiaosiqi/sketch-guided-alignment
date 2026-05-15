@@ -37,7 +37,10 @@ def main():
     ap.add_argument("--model", default="glm-4-air")
     ap.add_argument("--temperature", type=float, default=0.0)
     ap.add_argument("--max_tokens", type=int, default=1024)
-    ap.add_argument("--sleep_between", type=float, default=0.0, help="速率限制可用")
+    ap.add_argument("--sleep_between", type=float, default=0.0,
+                    help="提交间隔(秒),并发下做限速用;0=不限速")
+    ap.add_argument("--concurrency", type=int, default=50,
+                    help="并发线程数,每条解 2 次 API。GLM-4-Air 上限约 100")
     args = ap.parse_args()
 
     problems = load_problems(args.problems_jsonl)
@@ -56,6 +59,7 @@ def main():
         pass_threshold=args.pass_threshold,
         alpha=args.alpha,
         sleep_between=args.sleep_between,
+        concurrency=args.concurrency,
     )
 
 

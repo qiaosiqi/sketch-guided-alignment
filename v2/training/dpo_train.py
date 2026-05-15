@@ -3,8 +3,8 @@ DPO 训练入口。基于 trl 0.11+ 的 DPOTrainer / DPOConfig。
 
 关键设计:
 - ref_model 默认与 policy 同一份(trl 内部会 deepcopy 或 reuse 加 PEFT adapter)
-- V100-32G 上跑两份 3B fp16 ≈ 14GB + 14GB,加 optimizer 状态会爆;
-  必须依赖 ZeRO-3 全 offload。若仍跑不动,加 --use_lora
+- A800-80G bf16:policy + ref 两份 3B bf16 ≈ 6+6GB,加 Adam ≈ 48GB,
+  ZeRO-2 无 offload 单卡放得下,无需 LoRA。极端 OOM 才加 --use_lora
 - 动态采样靠 dpo_dataset.py 的 set_transform 实现
 """
 from __future__ import annotations
@@ -42,9 +42,10 @@ def parse_args():
     ap.add_argument("--beta", type=float, default=0.1)
     ap.add_argument("--learning_rate", type=float, default=5e-7)
     ap.add_argument("--num_train_epochs", type=int, default=10)
-    ap.add_argument("--per_device_train_batch_size", type=int, default=1)
-    ap.add_argument("--per_device_eval_batch_size", type=int, default=1)
-    ap.add_argument("--gradient_accumulation_steps", type=int, default=16)
+    # A800-80G: micro-batch 调大、grad-accum 缩小,有效 batch 仍 = 16(4×4),仅提速
+    ap.add_argument("--per_device_train_batch_size", type=int, default=4)
+    ap.add_argument("--per_device_eval_batch_size", type=int, default=4)
+    ap.add_argument("--gradient_accumulation_steps", type=int, default=4)
     ap.add_argument("--warmup_ratio", type=float, default=0.1)
     ap.add_argument("--max_length", type=int, default=2048)
     ap.add_argument("--max_prompt_length", type=int, default=1024)
@@ -121,7 +122,7 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        fp16=True, bf16=False,
+        bf16=True, fp16=False,                    # A800: bf16(StarCoder2 原生)
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,

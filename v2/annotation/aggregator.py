@@ -15,8 +15,11 @@ import json
 import logging
 import os
 import time
+from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from dataclasses import asdict
 from typing import Optional
+
+import requests
 
 from .judge_client import GLMJudge
 from .rubric import score_sketch, score_code
@@ -72,6 +75,16 @@ def _failed(judge_model: str) -> AlgorithmScores:
 # 增量写 scores.jsonl
 # ============================================================
 
+def _safe_score_one(judge, problem_text, sketch, code, alpha):
+    """线程池 worker:绝不抛异常。judge_client 已自带 3 次退避重试;
+    重试耗尽后会抛 JudgeError,这里兜底成 _failed(final=-1),与串行版语义一致。"""
+    try:
+        return score_one(judge, problem_text, sketch, code, alpha=alpha)
+    except Exception as e:  # noqa: BLE001 — 单条失败不能拖垮整池
+        log.warning(f"score_one failed (treated as final=-1): {type(e).__name__}: {e}")
+        return _failed(judge.model)
+
+
 def batch_annotate(
     judge: GLMJudge,
     codes_path: str,
@@ -81,6 +94,7 @@ def batch_annotate(
     pass_threshold: float = 0.0,
     alpha: float = 0.4,
     sleep_between: float = 0.0,
+    concurrency: int = 50,
 ):
     """
     对 codes.jsonl 里每条 (parsed_ok=True) 的 code 调 judge 评分,落 scores.jsonl。
@@ -91,6 +105,12 @@ def batch_annotate(
         默认 pass_threshold=0,意味着只要 code 跑得起来就评分。
         若想节约 API,把 pass_threshold 设为 0.5(与 θ_pass_gvb 对齐:
         GvB 候选恰好全覆盖,且不多评一份)。
+
+    并发:
+        - concurrency 个线程并行调 GLM(每条解 2 次 API:sketch + code)。
+          GLM-4-Air 并发上限约 100,默认 50;sleep_between>0 时在提交间限速。
+        - 有界在途(≤ concurrency×4):不把整份 codes.jsonl 读进内存,支持超大文件。
+        - 只有主线程写 scores.jsonl(无需锁),增量 flush,断点可续跑。
     """
     # 读 exec 结果,索引 (task_id, sample_id, code_id) -> pass_ratio
     exec_idx: dict[tuple, float] = {}
@@ -110,49 +130,76 @@ def batch_annotate(
                     done.add((o["task_id"], o["sample_id"], o.get("code_id", 0)))
                 except Exception:
                     pass
-    log.info(f"annotate: {len(done)} already scored.")
+    log.info(f"annotate: {len(done)} already scored. concurrency={concurrency}")
+
+    # 放大连接池,匹配并发度,避免 urllib3 "connection pool is full" 告警
+    adapter = requests.adapters.HTTPAdapter(
+        pool_connections=concurrency, pool_maxsize=concurrency, max_retries=0,
+    )
+    judge._session.mount("https://", adapter)
+    judge._session.mount("http://", adapter)
 
     os.makedirs(os.path.dirname(out_path) or ".", exist_ok=True)
-    with open(codes_path, "r", encoding="utf-8") as fin, open(out_path, "a", encoding="utf-8") as fout:
+
+    n_scored = 0
+    max_inflight = max(concurrency * 4, concurrency)
+
+    with open(codes_path, "r", encoding="utf-8") as fin, \
+            open(out_path, "a", encoding="utf-8") as fout, \
+            ThreadPoolExecutor(max_workers=concurrency) as ex:
+
+        inflight: dict = {}  # future -> code 记录 c
+
+        def _write(c, scores, placeholder):
+            rec = {
+                "task_id": c["task_id"],
+                "sample_id": c["sample_id"],
+                "code_id": c.get("code_id", 0),
+                "placeholder": placeholder,
+                "scores": asdict(scores),
+            }
+            fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
+            fout.flush()
+
+        def _drain(until: int):
+            nonlocal n_scored
+            while len(inflight) > until:
+                finished, _ = wait(inflight, return_when=FIRST_COMPLETED)
+                for fut in finished:
+                    c = inflight.pop(fut)
+                    _write(c, fut.result(), None)
+                    n_scored += 1
+                    if n_scored % 200 == 0:
+                        log.info(f"annotate: {n_scored} newly scored (inflight={len(inflight)})")
+
         for line in fin:
             c = json.loads(line)
             key = (c["task_id"], c["sample_id"], c.get("code_id", 0))
             if key in done:
                 continue
+            done.add(key)
 
-            # 不可评分的占位
+            # 不可评分的占位(无 API 调用,立即写)
             placeholder = None
             if not c.get("parsed_ok"):
                 placeholder = "unparsable_code"
             elif exec_idx.get(key, 0.0) < pass_threshold:
                 placeholder = "below_pass_threshold"
-
             if placeholder is not None:
-                rec = {
-                    "task_id": c["task_id"],
-                    "sample_id": c["sample_id"],
-                    "code_id": c.get("code_id", 0),
-                    "placeholder": placeholder,
-                    "scores": asdict(_failed(judge.model)),
-                }
-                fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
-                fout.flush()
+                _write(c, _failed(judge.model), placeholder)
                 continue
 
             problem = problems_by_id.get(c["task_id"])
             if problem is None:
                 continue
 
-            scores = score_one(judge, problem.question, c["sketch"], c["code"], alpha=alpha)
-            rec = {
-                "task_id": c["task_id"],
-                "sample_id": c["sample_id"],
-                "code_id": c.get("code_id", 0),
-                "placeholder": None,
-                "scores": asdict(scores),
-            }
-            fout.write(json.dumps(rec, ensure_ascii=False) + "\n")
-            fout.flush()
-            done.add(key)
+            fut = ex.submit(_safe_score_one, judge, problem.question,
+                            c["sketch"], c["code"], alpha)
+            inflight[fut] = c
             if sleep_between > 0:
                 time.sleep(sleep_between)
+            _drain(max_inflight)
+
+        _drain(0)
+
+    log.info(f"annotate done: {n_scored} newly scored, total done={len(done)}")

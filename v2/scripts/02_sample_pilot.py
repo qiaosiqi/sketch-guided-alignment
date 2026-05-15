@@ -133,7 +133,8 @@ def main():
     log.info(f"selected {len(chosen)} problems for pilot")
 
     # 2) Sketch 采样
-    backend = build_backend(args.model_path, dtype="float16", prefer=args.prefer_backend)
+    # A800: bfloat16,与 StarCoder2 原生权重 + bf16 训练一致
+    backend = build_backend(args.model_path, dtype="bfloat16", prefer=args.prefer_backend)
 
     # 拿个 tokenizer 做长度过滤(直接用 backend 内部的)
     tokenizer = getattr(backend, "tokenizer", None)
