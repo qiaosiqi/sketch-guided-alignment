@@ -2,10 +2,10 @@
 SFT 训练入口。基于 trl 0.11+ 的 SFTTrainer / SFTConfig。
 
 关键设计:
-- A800-80G bf16(StarCoder2-3B 原生 bf16;DPO lr=5e-7 在 fp16 下易溢出)
-- DeepSpeed ZeRO-2 无 offload (ds_zero2.json);3B 全参 + Adam ≈ 48GB,80G 单卡放得下,
-  绝不能 offload 到 18 核 CPU
-- gradient_checkpointing=True(可关:80G 单卡显存够;留 True 保守省显存)
+- 5090 ×2 bf16(StarCoder2-3B 原生 bf16;Blackwell 原生 bf16;DPO lr=5e-7 在 fp16 下易溢出)
+- DeepSpeed ZeRO-2 无 offload (ds_zero2_2gpu.json);3B 全参 + Adam ≈ 48GB,
+  ZeRO-2 把梯度+optim 切到 2 卡后每卡 ≈ 26GB,32GB 上放得下;28 核 CPU 同样不 offload
+- gradient_checkpointing=True(2×32GB 余量小,必须开)
 - 自定义 DynamicSFTCollator,从每题 top-p% 候选池里每步采一个
 - 训练验证集来自 merged.jsonl 的 val 切片(由 prepare_apps 9:1 拆出来)
 
@@ -52,9 +52,9 @@ def parse_args():
     # 训练超参
     ap.add_argument("--learning_rate", type=float, default=5e-7)
     ap.add_argument("--num_train_epochs", type=int, default=10)
-    # A800-80G: micro-batch 调大、grad-accum 缩小,有效 batch 仍 = 32(8×4),仅提速
-    ap.add_argument("--per_device_train_batch_size", type=int, default=8)
-    ap.add_argument("--per_device_eval_batch_size", type=int, default=8)
+    # 5090 ×2:per_device=4, grad-accum=4, 2 卡 → 有效 batch = 32(4×4×2),与 A800 等效
+    ap.add_argument("--per_device_train_batch_size", type=int, default=4)
+    ap.add_argument("--per_device_eval_batch_size", type=int, default=4)
     ap.add_argument("--gradient_accumulation_steps", type=int, default=4)
     ap.add_argument("--warmup_ratio", type=float, default=0.1)
     ap.add_argument("--max_length", type=int, default=2048)
@@ -121,7 +121,7 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        bf16=True, fp16=False,                    # A800: bf16(StarCoder2 原生)
+        bf16=True, fp16=False,                    # Blackwell + StarCoder2 都原生 bf16
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,              # 保留 candidate_* 字段

@@ -6,7 +6,8 @@ This file provides guidance to Claude Code when working with code in this reposi
 
 - **`v2/`** — the active research codebase (the one being written up as a paper). All work happens here.
 - `sketch-guided-alignment/` — the upstream baseline (a fork of Code-Optimise / Gee et al., 2024, arXiv:2406.12502) kept for reference only. Do not edit it.
-- `environment.yml` — full pinned conda env (`hebo_env`, Python 3.10).
+- `environment.yml` — upstream baseline pinned env (`hebo_env`, torch 2.1 + CUDA 12.1). Reference only; will not work on Blackwell.
+- `environment-5090.yml` — active env for 2 × RTX 5090 (`sketch5090`, torch 2.7 + CUDA 12.8 wheels, vLLM 0.8+).
 - `论文/` — reference paper drafts.
 
 All commands and path references below assume the working directory is `v2/`.
@@ -68,7 +69,7 @@ Top-p% of answers per problem, ranked by `algo_final` / `pass_ratio` / runtime. 
 
 ## Environment
 
-- **Hardware target**: single NVIDIA A800-80G, bf16, DeepSpeed ZeRO-2 (no CPU offload).
+- **Hardware target**: 2 × NVIDIA RTX 5090 32G (Blackwell sm_120), bf16. SFT: DeepSpeed ZeRO-2 no offload (`ds_zero2_2gpu.json`); DPO: DeepSpeed ZeRO-3 no offload (`ds_zero3_2gpu.json`) — DPO needs ZeRO-3 because policy+ref params (12GB total) don't fit alongside grads/optim on a 32GB card.
 - **Base model**: StarCoder2-3B (default; paths are config-driven).
 - **Judge model**: GLM-4-Air via ZhipuAI HTTP API.
 - **Sampling backend**: vLLM (primary) with HF Transformers fallback.

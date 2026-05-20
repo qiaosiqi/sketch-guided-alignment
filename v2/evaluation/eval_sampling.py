@@ -97,15 +97,24 @@ def main():
     ap.add_argument("--max_new_tokens_code", type=int, default=1024)
     ap.add_argument("--do_timing", action="store_true")
     ap.add_argument("--seed", type=int, default=1)
+    # 数据并行分片(对应 5090×2 拓扑)
+    ap.add_argument("--shard_id", type=int, default=0)
+    ap.add_argument("--n_shards", type=int, default=1)
     args = ap.parse_args()
+    assert 0 <= args.shard_id < args.n_shards, "shard_id 必须在 [0, n_shards) 内"
 
     os.makedirs(args.out_dir, exist_ok=True)
 
     problems = load_problems(args.problems_jsonl)
+    if args.n_shards > 1:
+        # 按 task_id 排序后 stride 切片,确保两 shard 在不同 model 复跑时分片一致
+        problems = sorted(problems, key=lambda p: p.task_id)[args.shard_id::args.n_shards]
+        log.info(f"shard {args.shard_id}/{args.n_shards}: {len(problems)} problems after slicing")
     problems_by_id = {p.task_id: p for p in problems}
     log.info(f"loaded {len(problems)} test problems")
 
-    backend = build_backend(args.model_path, dtype="float16", prefer=args.prefer_backend)
+    # bfloat16 与 StarCoder2 原生权重、训练 dtype 一致;Blackwell 同样原生支持
+    backend = build_backend(args.model_path, dtype="bfloat16", prefer=args.prefer_backend)
     tokenizer = getattr(backend, "tokenizer", None)
     if tokenizer is None:
         from transformers import AutoTokenizer

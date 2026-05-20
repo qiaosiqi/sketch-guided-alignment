@@ -1,0 +1,69 @@
+#!/usr/bin/env bash
+# Data-parallel 双卡采样 launcher(配合 5090 ×2)。
+#
+# 起两个进程,每个 pin 到一张卡,分别跑 problems 的偶数和奇数下标分片,
+# 跑完把三份产物(sketches/codes/exec)cat 合并到 $OUT_DIR 下。
+#
+# 用法:
+#   bash v2/scripts/dp_sample.sh /data/work/out/sample_train \
+#       --problems_jsonl /data/work/out/apps/train.jsonl \
+#       --model_path /data/models/StarCoder2-3B \
+#       --n_problems 99999 --n_per_temp 100 --temps 0.6
+#
+# 注意:
+# - 第一个位置参数固定为 OUT_DIR(其余参数原样转发给 02_sample_pilot)
+# - 不能在转发参数里传 --out_dir / --shard_id / --n_shards,launcher 会自动注入
+# - 中断重跑安全:每个 shard 子目录内的 jsonl 都是 append 写,会跳过已完成 (task_id, sample_id, code_id)
+
+set -euo pipefail
+
+if [[ $# -lt 1 ]]; then
+    echo "Usage: $0 <OUT_DIR> [args forwarded to 02_sample_pilot...]" >&2
+    exit 1
+fi
+
+OUT_DIR="$1"; shift
+SHARD0_DIR="${OUT_DIR}/_shard0"
+SHARD1_DIR="${OUT_DIR}/_shard1"
+mkdir -p "$SHARD0_DIR" "$SHARD1_DIR"
+
+# 拒绝转发与 launcher 内部约定冲突的参数
+for arg in "$@"; do
+    case "$arg" in
+        --out_dir|--shard_id|--n_shards)
+            echo "[dp_sample] forbidden forwarded arg: $arg (launcher 内部已注入)" >&2
+            exit 2
+            ;;
+    esac
+done
+
+echo "[dp_sample] launching 2 shards into $OUT_DIR"
+
+CUDA_VISIBLE_DEVICES=0 python -m v2.scripts.02_sample_pilot \
+    --out_dir "$SHARD0_DIR" --shard_id 0 --n_shards 2 "$@" \
+    > "$SHARD0_DIR/stdout.log" 2> "$SHARD0_DIR/stderr.log" &
+PID0=$!
+
+CUDA_VISIBLE_DEVICES=1 python -m v2.scripts.02_sample_pilot \
+    --out_dir "$SHARD1_DIR" --shard_id 1 --n_shards 2 "$@" \
+    > "$SHARD1_DIR/stdout.log" 2> "$SHARD1_DIR/stderr.log" &
+PID1=$!
+
+echo "[dp_sample] shard0 pid=$PID0, shard1 pid=$PID1; tail -f ${SHARD0_DIR}/stderr.log for progress"
+
+# 任何一个失败就让整个 launcher 失败,但要先等另一个收尾,避免半成品
+FAILED=0
+wait $PID0 || FAILED=1
+wait $PID1 || FAILED=1
+if [[ $FAILED -ne 0 ]]; then
+    echo "[dp_sample] one or both shards failed; logs in $SHARD0_DIR / $SHARD1_DIR" >&2
+    exit 3
+fi
+
+echo "[dp_sample] merging shard outputs into $OUT_DIR"
+for fname in chosen_problems.jsonl sketches.jsonl codes.jsonl exec.jsonl; do
+    cat "$SHARD0_DIR/$fname" "$SHARD1_DIR/$fname" > "$OUT_DIR/$fname"
+done
+
+echo "[dp_sample] done. Outputs:"
+ls -la "$OUT_DIR"/*.jsonl

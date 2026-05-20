@@ -15,7 +15,7 @@
 
 | 项 | 值 | 备注 |
 |---|---|---|
-| Base model | `StarCoder2-3B` | V100-32G,fp16(不开 bf16) |
+| Base model | `StarCoder2-3B` | 2 × RTX 5090-32G (Blackwell),bf16 全程 |
 | Judge LLM | GLM-4-Air | 与原论文一致 |
 | 采样数 | 100 / 题 | sketch + code 各一遍,共 200 次推理 |
 | 采样温度 | 0.6 起步 | 多温度由 pilot 决定 |
@@ -107,19 +107,19 @@ python -m v2.scripts.01_prepare_apps \
     --apps_root /path/to/APPS/raw \
     --out_dir out/apps
 
-# 1) Pilot(50 题 × 100 sketch × 3 温度 + 每 sketch 1 code + 执行)
-python -m v2.scripts.02_sample_pilot \
+# 1) Pilot(50 题 × 100 sketch × 3 温度 + 每 sketch 1 code + 执行;双卡 vllm DP)
+bash v2/scripts/dp_sample.sh out/pilot \
     --problems_jsonl out/apps/train.jsonl \
     --model_path /path/to/StarCoder2-3B \
-    --out_dir out/pilot
+    --n_problems 50 --n_per_temp 100 --temps 0.4 0.7 1.0
 
 # 2) 分析 pilot 结果,决定主跑配置
 python -m v2.scripts.03_analyze_pilot --pilot_dir out/pilot
 
 # 3) 全量主跑(配置依据 pilot 结果)
-python -m v2.scripts.02_sample_pilot \
+bash v2/scripts/dp_sample.sh out/main \
     --problems_jsonl out/apps/train.jsonl --model_path .../StarCoder2-3B \
-    --out_dir out/main --n_problems 99999 --n_per_temp 100 --temps 0.6
+    --n_problems 99999 --n_per_temp 100 --temps 0.6
 
 # 4) GLM-4-Air 评分 (要 GLM_API_KEY 环境变量)
 export GLM_API_KEY=...
@@ -133,27 +133,27 @@ python -m v2.scripts.05_merge \
     --out out/datasets/train/merged.jsonl
 # val 同理:用 val.jsonl + 单独的 sample_dir (val 集也要采样+评分+合并)
 
-# 6a) SFT 训练
-deepspeed --num_gpus 1 -m v2.scripts.06_train_sft \
+# 6a) SFT 训练 (5090 ×2, ZeRO-2 无 offload)
+deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
     --train_merged out/datasets/train/merged.jsonl \
     --val_merged out/datasets/val/merged.jsonl \
     --model_path /path/to/StarCoder2-3B \
     --output_dir out/runs/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
-    --ds_config v2/configs/ds_zero3_offload.json
+    --ds_config v2/configs/ds_zero2_2gpu.json
 
-# 6b) DPO 训练 (推荐从 SFT 检查点继续)
-deepspeed --num_gpus 1 -m v2.scripts.07_train_dpo \
+# 6b) DPO 训练 (推荐从 SFT 检查点继续;ZeRO-3 切参更稳)
+deepspeed --num_gpus 2 -m v2.scripts.07_train_dpo \
     --train_merged out/datasets/train/merged.jsonl \
     --val_merged out/datasets/val/merged.jsonl \
     --model_path out/runs/sft_alg_top25 \
     --output_dir out/runs/dpo_gvb \
     --task gvb --augment True \
-    --ds_config v2/configs/ds_zero3_offload.json
+    --ds_config v2/configs/ds_zero3_2gpu.json
 
-# 7) 评测(test 集)
-python -m v2.scripts.08_eval \
+# 7) 评测(test 集,双卡 vllm DP)
+bash v2/scripts/dp_eval.sh out/evals/dpo_gvb \
     --problems_jsonl out/apps/test.jsonl \
     --model_path out/runs/dpo_gvb \
-    --out_dir out/evals/dpo_gvb --do_timing
+    --do_timing
 ```

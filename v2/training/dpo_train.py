@@ -3,8 +3,10 @@ DPO 训练入口。基于 trl 0.11+ 的 DPOTrainer / DPOConfig。
 
 关键设计:
 - ref_model 默认与 policy 同一份(trl 内部会 deepcopy 或 reuse 加 PEFT adapter)
-- A800-80G bf16:policy + ref 两份 3B bf16 ≈ 6+6GB,加 Adam ≈ 48GB,
-  ZeRO-2 无 offload 单卡放得下,无需 LoRA。极端 OOM 才加 --use_lora
+- 5090 ×2 bf16:policy + ref 各 6GB 参数。ZeRO-2 不切参,2×32GB 上每卡要
+  同时持有 12GB 参数 + 6GB 梯度切片(切了)+ 12GB optim 切片(切了)+ 激活,
+  非常临界 → 默认走 ZeRO-3 (ds_zero3_2gpu.json) 把参数也切到 2 卡。
+  极端 OOM 再 --use_lora(LoRA 模式下 ref 复用 policy 关闭 adapter,显存最省)
 - 动态采样靠 dpo_dataset.py 的 set_transform 实现
 """
 from __future__ import annotations
@@ -42,9 +44,9 @@ def parse_args():
     ap.add_argument("--beta", type=float, default=0.1)
     ap.add_argument("--learning_rate", type=float, default=5e-7)
     ap.add_argument("--num_train_epochs", type=int, default=10)
-    # A800-80G: micro-batch 调大、grad-accum 缩小,有效 batch 仍 = 16(4×4),仅提速
-    ap.add_argument("--per_device_train_batch_size", type=int, default=4)
-    ap.add_argument("--per_device_eval_batch_size", type=int, default=4)
+    # 5090 ×2:per_device=2, grad-accum=4, 2 卡 → 有效 batch = 16(2×4×2),与 A800 等效
+    ap.add_argument("--per_device_train_batch_size", type=int, default=2)
+    ap.add_argument("--per_device_eval_batch_size", type=int, default=2)
     ap.add_argument("--gradient_accumulation_steps", type=int, default=4)
     ap.add_argument("--warmup_ratio", type=float, default=0.1)
     ap.add_argument("--max_length", type=int, default=2048)
@@ -122,7 +124,7 @@ def main():
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        bf16=True, fp16=False,                    # A800: bf16(StarCoder2 原生)
+        bf16=True, fp16=False,                    # Blackwell + StarCoder2 都原生 bf16
         gradient_checkpointing=True,
         gradient_checkpointing_kwargs={"use_reentrant": False},
         remove_unused_columns=False,

@@ -19,46 +19,70 @@
 
 ---
 
-## 1. 快速部署(Linux 云主机,A800-80G 单卡;V100-32G 见排错表)
+## 1. 快速部署(Linux 云主机,2 × RTX 5090-32G;A800-80G 见 git log A800 分支)
 
-> **A800-80G 单卡最小闭环**:只跑 BASE + SFT-ALG-25 + DPO-GvB。训练用 `v2/configs/ds_zero2.json`(ZeRO-2 无 offload + bf16,绝不 offload 到 CPU);采样/训练全程 bf16;评分 `04_annotate --concurrency 50`(GLM-4-Air 上限约 100);**eval 不加 `--do_timing`**——最小闭环不需要 runtime 信号,而那个 5 万次执行测 CoV 的昂贵路径只在 `--do_timing` 时触发,跳过它 18 核 CPU 就不是瓶颈。
+> **5090 ×2 最小闭环**:BASE + SFT-ALG-25 + DPO-GvB。采样/训练全程 bf16(Blackwell + StarCoder2 都原生)。SFT 用 `ds_zero2_2gpu.json`(ZeRO-2 无 offload);DPO 默认 `ds_zero3_2gpu.json`(ZeRO-3 无 offload,policy+ref 各 6GB 必须切参);采样/评测用 `dp_sample.sh` / `dp_eval.sh`(数据并行起 2 个 vLLM 进程各占一卡,产物 cat 合并)。评分 `04_annotate --concurrency 50`。
+
+> **路径约定**:仓库 clone 到 `/data/code/sketch-guided-clm-alignment`,产物全部落 `/data/work/out/`,模型在 `/data/models/`,APPS 数据在 `/data/datasets/APPS`,HF/MS cache 用 `/data/hf_cache`。根盘 `/` 只剩 ~24GB,放任何大件都会爆。
 
 ```bash
-# --- 0. 克隆 ---
-git clone https://github.com/qiaosiqi/sketch-guided-alignment.git
-cd sketch-guided-alignment
+# --- 0. 准备目录(只跑一次) ---
+mkdir -p /data/{code,models,datasets,hf_cache,work/out} /data/conda/envs
 
-# --- 1. 装 Python 环境(conda 推荐) ---
-conda create -n sketch python=3.10 -y
-conda activate sketch
+# --- 1. 克隆代码到 /data ---
+cd /data/code
+git clone -b feat/5090x2-adaptation https://github.com/qiaosiqi/sketch-guided-alignment.git sketch-guided-clm-alignment
+cd sketch-guided-clm-alignment
 
-# 核心依赖(A800/V100 同 CUDA 12.1;A800 走 bf16,V100 回退 fp16)
-pip install torch==2.1.0 --index-url https://download.pytorch.org/whl/cu121
-pip install transformers==4.45.2 datasets==2.20.0 accelerate==0.34.2
-pip install trl==0.11.4 peft==0.13.2 deepspeed==0.15.4
-pip install vllm==0.6.3 numpy pandas requests tqdm tensorboard pytest
+# --- 2. Python 环境(conda 装到 /data,根盘装不下) ---
+# 假设主机已有 miniconda/anaconda;若没有,先装到 /data/miniconda
+conda env create -f environment-5090.yml -p /data/conda/envs/sketch5090
+conda activate /data/conda/envs/sketch5090
+# 验证 Blackwell 可见(应输出 (12, 0)):
+python -c "import torch; print(torch.cuda.get_device_capability(0))"
 
-# --- 2. 下载 APPS 数据集 (1.3GB,git 已排除) ---
-# 方式 A:从 Berkeley 官方 (推荐)
-mkdir -p data && cd data
+# --- 3. 下载 APPS 数据集 (1.3GB,git 已排除) ---
+cd /data/datasets
+# 方式 A:Berkeley 官方
 wget https://people.eecs.berkeley.edu/~hendrycks/APPS.tar.gz
 tar -xzf APPS.tar.gz   # 解出 APPS/raw/{train,test}/0000..4999/
-cd ..
+# 方式 B:modelscope 镜像(国内更快)
+# pip 已含 modelscope,可:
+#   modelscope download --dataset codeparrot/apps --local_dir /data/datasets/APPS_ms
+#   然后自己写一段把 ms dataset 转回 APPS 原始目录格式
 
-# 方式 B:从 HuggingFace
-# python -c "from datasets import load_dataset; load_dataset('codeparrot/apps', split='train')"
-# 然后自己写一段把 HF dataset 转回 APPS 原始目录格式
-
-# --- 3. 下载 base model (StarCoder2-3B) ---
-huggingface-cli download bigcode/starcoder2-3b --local-dir models/StarCoder2-3B
-
-# --- 4. 配 GLM-4-Air API key (Phase 4 annotation 用) ---
-export GLM_API_KEY="your_zhipuai_api_key"
-# 永久化:写进 ~/.bashrc
+# --- 4. 下载 base model(modelscope,国内云主机推荐) ---
+modelscope download --model AI-ModelScope/starcoder2-3b --local_dir /data/models/StarCoder2-3B
+# 若 modelscope 上没找到,改用 HF 镜像:
+#   HF_ENDPOINT=https://hf-mirror.com huggingface-cli download bigcode/starcoder2-3b \
+#     --local-dir /data/models/StarCoder2-3B
 
 # --- 5. 跑 smoke tests 验证环境 ---
+cd /data/code/sketch-guided-clm-alignment
 pytest v2/tests -v
 # 应该 87 passed (Linux 上 9 个 runner test 也能跑)
+```
+
+**~/.bashrc 需要追加的环境变量**(永久化,登录即生效):
+
+```bash
+# Python / HuggingFace / Modelscope 缓存指向 /data,避免写满根盘
+export HF_HOME=/data/hf_cache
+export TRANSFORMERS_CACHE=/data/hf_cache
+export MODELSCOPE_CACHE=/data/hf_cache/modelscope
+
+# GLM-4-Air judge API key(Phase 4 annotation 必需)
+export GLM_API_KEY="your_zhipuai_api_key"
+
+# 5090 ×2 PCIe 拓扑:NCCL 默认配置一般 OK;若训练 hang,取消下行注释
+# export NCCL_P2P_DISABLE=1
+export NCCL_DEBUG=WARN
+
+# 让 v2.* 模块路径可解析(也可在每次跑命令前 cd 到仓库根)
+export PYTHONPATH=/data/code/sketch-guided-clm-alignment:${PYTHONPATH:-}
+
+# 自动激活环境
+source /data/conda/envs/sketch5090/bin/activate /data/conda/envs/sketch5090
 ```
 
 ---
@@ -67,48 +91,49 @@ pytest v2/tests -v
 
 每一步都有断点续跑,中断后重跑命令会从上次产物继续。
 
+> 所有命令的工作目录都假设是 `/data/code/sketch-guided-clm-alignment/`(`cd` 进去)。产物路径全部用 `/data/work/out/...` 绝对路径,不依赖 cwd。
+
 ### 2.1 数据预处理(秒级)
 
 ```bash
 python -m v2.scripts.01_prepare_apps \
-    --apps_root data/APPS/raw \
-    --out_dir out/apps
-# 产物:out/apps/{train,val,test}.jsonl
+    --apps_root /data/datasets/APPS/raw \
+    --out_dir /data/work/out/apps
+# 产物:/data/work/out/apps/{train,val,test}.jsonl
 # 过滤后只保留 interview 难度;train/val/test 实际题数以本步骤打印的统计为准
 ```
 
-### 2.2 Pilot 验证(~30-60 分钟,vllm)
+### 2.2 Pilot 验证(~20-40 分钟,双卡 vllm)
 
 ```bash
-python -m v2.scripts.02_sample_pilot \
-    --problems_jsonl out/apps/train.jsonl \
-    --model_path models/StarCoder2-3B \
-    --out_dir out/pilot \
+bash v2/scripts/dp_sample.sh /data/work/out/pilot \
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --model_path /data/models/StarCoder2-3B \
     --n_problems 50 --n_per_temp 100 --temps 0.4 0.7 1.0
 
-python -m v2.scripts.03_analyze_pilot --pilot_dir out/pilot
+python -m v2.scripts.03_analyze_pilot --pilot_dir /data/work/out/pilot
 ```
 
 `03_analyze_pilot` 会报 5 个指标 + 给出温度推荐。**根据结果决定 2.3 用单温度还是多温度。**
 
-### 2.3 全量采样(单卡 V100 vllm,~12-24 小时)
+### 2.3 全量采样(双卡 vllm DP,~6-12 小时)
 
 ```bash
 # train split
-python -m v2.scripts.02_sample_pilot \
-    --problems_jsonl out/apps/train.jsonl \
-    --model_path models/StarCoder2-3B \
-    --out_dir out/sample_train \
+bash v2/scripts/dp_sample.sh /data/work/out/sample_train \
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --model_path /data/models/StarCoder2-3B \
     --n_problems 99999 --n_per_temp 100 \
     --temps 0.6   # 或多温度,按 pilot 结论改
 
-# val split 同理(改 problems_jsonl 和 out_dir)
-python -m v2.scripts.02_sample_pilot \
-    --problems_jsonl out/apps/val.jsonl \
-    --model_path models/StarCoder2-3B \
-    --out_dir out/sample_val \
+# val split 同理
+bash v2/scripts/dp_sample.sh /data/work/out/sample_val \
+    --problems_jsonl /data/work/out/apps/val.jsonl \
+    --model_path /data/models/StarCoder2-3B \
     --n_problems 99999 --n_per_temp 100 --temps 0.6
 ```
+
+> `dp_sample.sh` 会起 2 个 vLLM 进程各 pin 一张卡,题目对半切片,跑完 cat 合并产物到 OUT_DIR 下。中断重跑安全(每个 shard 子目录 append 写入)。
 
 ### 2.4 GLM-4-Air 评分(API,~10-30 小时,取决于并发和阈值)
 
@@ -118,13 +143,13 @@ python -m v2.scripts.02_sample_pilot \
 
 ```bash
 python -m v2.scripts.04_annotate \
-    --problems_jsonl out/apps/train.jsonl \
-    --sample_dir out/sample_train \
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --sample_dir /data/work/out/sample_train \
     --pass_threshold 0.5 --alpha 0.4 --concurrency 50
 
 python -m v2.scripts.04_annotate \
-    --problems_jsonl out/apps/val.jsonl \
-    --sample_dir out/sample_val \
+    --problems_jsonl /data/work/out/apps/val.jsonl \
+    --sample_dir /data/work/out/sample_val \
     --pass_threshold 0.5 --alpha 0.4 --concurrency 50
 ```
 
@@ -134,63 +159,66 @@ API 调用粗算:`训练题数 × 100 解 × 2 次调用`(`pass_threshold=0`,全
 
 ```bash
 python -m v2.scripts.05_merge \
-    --problems_jsonl out/apps/train.jsonl \
-    --sample_dir out/sample_train \
-    --out out/datasets/train/merged.jsonl
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --sample_dir /data/work/out/sample_train \
+    --out /data/work/out/datasets/train/merged.jsonl
 
 python -m v2.scripts.05_merge \
-    --problems_jsonl out/apps/val.jsonl \
-    --sample_dir out/sample_val \
-    --out out/datasets/val/merged.jsonl
+    --problems_jsonl /data/work/out/apps/val.jsonl \
+    --sample_dir /data/work/out/sample_val \
+    --out /data/work/out/datasets/val/merged.jsonl
 ```
 
-### 2.6 SFT 训练(~6-12 小时,DeepSpeed ZeRO-3 单卡 V100)
+### 2.6 SFT 训练(~4-8 小时,DeepSpeed ZeRO-2 双卡 5090)
 
 ```bash
 # 论文里的 ALG 风格(按算法分排 top-25%)
-deepspeed --num_gpus 1 -m v2.scripts.06_train_sft \
-    --train_merged out/datasets/train/merged.jsonl \
-    --val_merged out/datasets/val/merged.jsonl \
-    --model_path models/StarCoder2-3B \
-    --output_dir out/runs/sft_alg_top25 \
+deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
+    --train_merged /data/work/out/datasets/train/merged.jsonl \
+    --val_merged /data/work/out/datasets/val/merged.jsonl \
+    --model_path /data/models/StarCoder2-3B \
+    --output_dir /data/work/out/runs/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
     --num_train_epochs 10 \
-    --ds_config v2/configs/ds_zero2.json   # A800-80G 单卡:ZeRO-2 无 offload + bf16
+    --ds_config v2/configs/ds_zero2_2gpu.json   # ZeRO-2 无 offload + bf16
 
 # 对照实验:SPD(按 runtime),PASS(按 pass_ratio)
 # 只改 --sort_by 即可
 ```
 
-### 2.7 DPO 训练(~6-12 小时,接 SFT 检查点继续)
+### 2.7 DPO 训练(~4-8 小时,接 SFT 检查点继续)
 
 ```bash
-# 主实验:GvB(本工作核心)
-deepspeed --num_gpus 1 -m v2.scripts.07_train_dpo \
-    --train_merged out/datasets/train/merged.jsonl \
-    --val_merged out/datasets/val/merged.jsonl \
-    --model_path out/runs/sft_alg_top25 \
-    --output_dir out/runs/dpo_gvb \
+# 主实验:GvB(本工作核心);DPO 走 ZeRO-3(policy+ref 各 6GB 必须切参才能装下 32GB)
+deepspeed --num_gpus 2 -m v2.scripts.07_train_dpo \
+    --train_merged /data/work/out/datasets/train/merged.jsonl \
+    --val_merged /data/work/out/datasets/val/merged.jsonl \
+    --model_path /data/work/out/runs/sft_alg_top25 \
+    --output_dir /data/work/out/runs/dpo_gvb \
     --task gvb --augment True \
-    --ds_config v2/configs/ds_zero2.json   # A800-80G 单卡:ZeRO-2 无 offload + bf16
+    --ds_config v2/configs/ds_zero3_2gpu.json   # ZeRO-3 无 offload + bf16
 
 # 对照:HvL / QvS / ALL —— 只改 --task 和 --output_dir
-# 全参数 OOM 时加 --use_lora
+# OOM 时加 --use_lora(也可切回 ds_zero2_2gpu.json,LoRA 模式下 ref 与 policy 共享)
 ```
 
-### 2.8 评测(test 集,~6-12 小时)
+### 2.8 评测(test 集,~3-6 小时,双卡 vllm DP)
 
 ```bash
-python -m v2.scripts.08_eval \
-    --problems_jsonl out/apps/test.jsonl \
-    --model_path out/runs/dpo_gvb \
-    --out_dir out/evals/dpo_gvb \
-    --do_timing
+bash v2/scripts/dp_eval.sh /data/work/out/evals/dpo_gvb \
+    --problems_jsonl /data/work/out/apps/test.jsonl \
+    --model_path /data/work/out/runs/dpo_gvb \
+    --n_per_temp 100 --temps 0.6 --do_timing
 
 # 同样跑 baseline / SFT-only / 其他 DPO 任务做对比
-python -m v2.scripts.08_eval --problems_jsonl out/apps/test.jsonl \
-    --model_path models/StarCoder2-3B --out_dir out/evals/base
-python -m v2.scripts.08_eval --problems_jsonl out/apps/test.jsonl \
-    --model_path out/runs/sft_alg_top25 --out_dir out/evals/sft_alg
+bash v2/scripts/dp_eval.sh /data/work/out/evals/base \
+    --problems_jsonl /data/work/out/apps/test.jsonl \
+    --model_path /data/models/StarCoder2-3B \
+    --n_per_temp 100 --temps 0.6 --do_timing
+bash v2/scripts/dp_eval.sh /data/work/out/evals/sft_alg \
+    --problems_jsonl /data/work/out/apps/test.jsonl \
+    --model_path /data/work/out/runs/sft_alg_top25 \
+    --n_per_temp 100 --temps 0.6 --do_timing
 # ... 以此类推
 ```
 
@@ -236,10 +264,13 @@ python -m v2.scripts.08_eval --problems_jsonl out/apps/test.jsonl \
 
 | 症状 | 原因 / 解决 |
 |---|---|
-| `RuntimeError: no kernel image is available` (vllm) | V100 不支持某些算子,环境变量 `VLLM_ATTENTION_BACKEND=XFORMERS` 或回退 `--prefer_backend hf` |
-| `bf16 not supported` | V100 不支持 bf16,确认 config 是 `fp16=True, bf16=False` |
-| OOM at DPO | 加 `--use_lora`,或减 `--per_device_train_batch_size 1 --gradient_accumulation_steps 32` |
-| 评分太慢 | 确认 `--pass_threshold 0.5`(别用 0.0 全评),或写并发 wrapper 提速 |
+| `RuntimeError: no kernel image is available` 或 `CUDA capability sm_120 is not compatible` | 装错了 PyTorch wheel(默认 PyPI 是 cu126,Blackwell 需要 cu128)。重装 `pip install torch==2.7.0+cu128 --extra-index-url https://download.pytorch.org/whl/cu128`。`environment-5090.yml` 已指定。 |
+| vLLM 启动卡死 / 段错误(5090) | 升级 vllm 至 0.8.5+。若仍异常,设 `VLLM_USE_V1=0` 回退老 engine,或临时改用 `--prefer_backend hf`。 |
+| `bf16 not supported` | 不应在 5090 上发生。若发生,确认实际跑的是 5090 卡(`nvidia-smi`)而非主机其他低端卡。 |
+| NCCL hang / `unhandled cuda error` 在 2 卡 ZeRO-2/3 中 | 5090 走 PCIe 时 P2P 可能不稳。先尝试 `export NCCL_P2P_DISABLE=1`,再不行加 `NCCL_SHM_DISABLE=1`;严重时设 `NCCL_DEBUG=INFO` 看具体阶段。 |
+| DPO OOM | 默认 ZeRO-3 装不下时:① 改 `--per_device_train_batch_size 1 --gradient_accumulation_steps 8`(有效 batch 仍 = 16);② 加 `--use_lora`;③ 极端情况切 `ds_zero2_2gpu.json` + `--use_lora`(ref 与 policy 共享,显存最省)。 |
+| 根盘 `/` 写满 | 必然是 HF cache 或 checkpoint 落 `/` 了。检查 `HF_HOME=/data/hf_cache`、`--output_dir` 是否绝对路径到 `/data`。 |
+| 评分太慢 | 确认 `--pass_threshold 0.5`(别用 0.0 全评)、`--concurrency 50`。 |
 | `signal.SIGALRM` AttributeError | 在 Windows 上跑 execution → 必须用 Linux |
 | 模型 import trust_remote_code 警告 | StarCoder2 需要 `trust_remote_code=True`,代码已设 |
 
