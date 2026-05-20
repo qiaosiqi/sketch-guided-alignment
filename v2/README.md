@@ -99,6 +99,19 @@ v2/
 
 ---
 
+## 环境部署(5090 ×2,Blackwell sm_120)
+
+分阶段装,不用 yml。只 pin 三个不让步的版本(torch cu128 wheel、vllm 0.8.5、trl ≥ 0.11),其余交给 pip 反向约束。
+
+```bash
+bash v2/scripts/setup_env.sh
+conda activate /data/conda/envs/sketch5090
+```
+
+环境默认装在 `/data/conda/envs/sketch5090`(根盘空间小);要改装别处,设 `ENV_PREFIX=/your/path` 后再跑。脚本会在每个关键步骤后核验(torch 是否拿到 sm_120、vllm 装完 torch 没被换掉、trl ≥ 0.11 的新 API 能否 import),失败立即退出。
+
+---
+
 ## 跑通顺序
 
 ```bash

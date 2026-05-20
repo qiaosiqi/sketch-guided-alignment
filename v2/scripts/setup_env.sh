@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# 5090 双卡(Blackwell sm_120)环境分阶段部署。
+#
+# 设计原则:只 pin 不让步的版本(torch cu128 wheel、vllm 0.8.5、trl ≥ 0.11),
+# 其余包交给 pip 反向约束自动解析。装错版本会直接跑不起来的才 pin。
+#
+# 用法:
+#   bash v2/scripts/setup_env.sh
+#   conda activate /data/conda/envs/sketch5090
+#
+# 出错时:本脚本设了 -e,某一步失败会立刻退出,可从那一步往下手动重跑。
+
+set -euo pipefail
+
+ENV_PREFIX="${ENV_PREFIX:-/data/conda/envs/sketch5090}"
+TORCH_INDEX="https://download.pytorch.org/whl/cu128"
+
+echo "[0/5] conda create (python=3.10) → $ENV_PREFIX"
+conda create -p "$ENV_PREFIX" python=3.10 pip -y
+
+# 后续步骤都在新环境里跑;不用 `conda activate`(脚本里激活不稳),直接走 prefix 的 pip。
+PIP="$ENV_PREFIX/bin/pip"
+
+echo "[1/5] torch 2.7.0 + cu128 (Blackwell sm_120 唯一可用 wheel)"
+"$PIP" install --index-url "$TORCH_INDEX" torch==2.7.0+cu128
+
+echo "    verify: torch.cuda + sm_120"
+"$ENV_PREFIX/bin/python" - <<'PY'
+import torch
+assert torch.cuda.is_available(), "CUDA not available"
+cap = torch.cuda.get_device_capability()
+assert cap == (12, 0), f"expected sm_120, got sm_{cap[0]}{cap[1]}"
+print(f"  torch={torch.__version__}, device={torch.cuda.get_device_name()}, cap={cap}")
+PY
+
+echo "[2/5] vllm 0.8.5 (Blackwell 上跑通过的一档)"
+# 不加 --no-deps:vllm 的运行时依赖很多,让 pip 解析;装完回头核验 torch 没被换。
+"$PIP" install vllm==0.8.5
+
+echo "    verify: torch still cu128"
+"$ENV_PREFIX/bin/python" - <<'PY'
+import torch
+assert "+cu128" in torch.__version__, f"torch was downgraded: {torch.__version__}"
+print(f"  torch={torch.__version__} OK")
+import vllm
+print(f"  vllm={vllm.__version__}")
+PY
+
+echo "[3/5] 训练栈 (trl ≥ 0.11 是硬约束,其余跟它解析)"
+"$PIP" install "trl>=0.11" transformers accelerate peft deepspeed datasets
+
+echo "    verify: trl 新版 API"
+"$ENV_PREFIX/bin/python" - <<'PY'
+from trl import SFTConfig, DPOConfig  # 0.11+ 才有
+import trl, transformers, accelerate, peft, deepspeed, datasets
+print(f"  trl={trl.__version__} transformers={transformers.__version__} "
+      f"accelerate={accelerate.__version__} peft={peft.__version__} "
+      f"deepspeed={deepspeed.__version__} datasets={datasets.__version__}")
+PY
+
+echo "[4/5] 工具 (全不 pin)"
+"$PIP" install modelscope pynvml sentencepiece pyyaml tensorboard rich pytest
+
+echo "[5/5] done. 激活环境:"
+echo "  conda activate $ENV_PREFIX"

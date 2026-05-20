@@ -7,7 +7,7 @@ This file provides guidance to Claude Code when working with code in this reposi
 - **`v2/`** — the active research codebase (the one being written up as a paper). All work happens here.
 - `sketch-guided-alignment/` — the upstream baseline (a fork of Code-Optimise / Gee et al., 2024, arXiv:2406.12502) kept for reference only. Do not edit it.
 - `environment.yml` — upstream baseline pinned env (`hebo_env`, torch 2.1 + CUDA 12.1). Reference only; will not work on Blackwell.
-- `environment-5090.yml` — active env for 2 × RTX 5090 (`sketch5090`, torch 2.7 + CUDA 12.8 wheels, vLLM 0.8+).
+- `v2/scripts/setup_env.sh` — phased install of the active env (`sketch5090`, torch 2.7+cu128, vllm 0.8.5, trl ≥ 0.11). Only the three Blackwell-critical packages are pinned; the rest are resolved by pip.
 - `论文/` — reference paper drafts.
 
 All commands and path references below assume the working directory is `v2/`.
