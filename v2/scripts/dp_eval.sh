@@ -7,7 +7,7 @@
 # 用法:
 #   bash v2/scripts/dp_eval.sh /data/work/out/evals/dpo_gvb \
 #       --problems_jsonl /data/work/out/apps/test.jsonl \
-#       --model_path /data/work/out/runs/dpo_gvb \
+#       --model_path /data/work/out/runs/dpo_gvb/best \
 #       --n_per_temp 100 --temps 0.6 --do_timing
 
 set -euo pipefail

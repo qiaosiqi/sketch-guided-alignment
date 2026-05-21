@@ -5,7 +5,7 @@ DPO 训练入口。本脚本是 v2.training.dpo_train 的 thin wrapper。
     deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
         --train_merged /data/work/out/datasets/train/merged.jsonl \
         --val_merged /data/work/out/datasets/val/merged.jsonl \
-        --model_path /data/work/out/runs/sft_alg_top25 \
+        --model_path /data/work/out/runs/sft_alg_top25/best \
         --output_dir /data/work/out/runs/dpo_gvb_from_sft \
         --task gvb \
         --augment True \

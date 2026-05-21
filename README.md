@@ -193,7 +193,7 @@ deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
 deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
-    --model_path /data/work/out/runs/sft_alg_top25 \
+    --model_path /data/work/out/runs/sft_alg_top25/best \
     --output_dir /data/work/out/runs/dpo_gvb \
     --task gvb --augment True \
     --ds_config v2/configs/ds_zero3_2gpu.json   # ZeRO-3 无 offload + bf16
@@ -207,7 +207,7 @@ deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
 ```bash
 bash v2/scripts/dp_eval.sh /data/work/out/evals/dpo_gvb \
     --problems_jsonl /data/work/out/apps/test.jsonl \
-    --model_path /data/work/out/runs/dpo_gvb \
+    --model_path /data/work/out/runs/dpo_gvb/best \
     --n_per_temp 100 --temps 0.6 --do_timing
 
 # 同样跑 baseline / SFT-only / 其他 DPO 任务做对比
@@ -217,10 +217,12 @@ bash v2/scripts/dp_eval.sh /data/work/out/evals/base \
     --n_per_temp 100 --temps 0.6 --do_timing
 bash v2/scripts/dp_eval.sh /data/work/out/evals/sft_alg \
     --problems_jsonl /data/work/out/apps/test.jsonl \
-    --model_path /data/work/out/runs/sft_alg_top25 \
+    --model_path /data/work/out/runs/sft_alg_top25/best \
     --n_per_temp 100 --temps 0.6 --do_timing
 # ... 以此类推
 ```
+
+> **`/best` 路径约定**:训练完后 `output_dir/best` 是按 val_loss 选出的最佳 epoch 的符号链接。下游(DPO 继续训、评测)统一从 `/best` 进。原因:我们把 `load_best_model_at_end=False`(5090 32GB 装不下 trainer 内部 reload),改用训练后由 `trainer.state.best_model_checkpoint` symlink 出来——语义和 `load_best=True` 完全等价,只是不动 GPU。
 
 每个 `out/evals/*/metrics.json` 含 `pass@1/10/100`、`mean_pass_ratio`、`mean_runtime_ns`、`mean_algo_final`。
 

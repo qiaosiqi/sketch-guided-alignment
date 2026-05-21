@@ -119,9 +119,12 @@ def main():
         lr_scheduler_type="linear",
         eval_strategy="epoch",      # transformers 4.46+ 把 evaluation_strategy 重命名为 eval_strategy
         save_strategy="epoch",
-        save_total_limit=2,
+        save_total_limit=2,         # trainer 会自动保护 state.best_model_checkpoint,不会被轮换删
         logging_strategy="epoch",
-        load_best_model_at_end=True,
+        # 不让 trainer 在训练结束后把"最佳 ckpt"reload 回 GPU —— 5090 32GB 装不下这一步的临时显存。
+        # 但保留 metric_for_best_model:trainer 仍在 _save_checkpoint 里跟踪 state.best_model_checkpoint,
+        # 训练结束后我们自己拿这个路径 symlink 出 best/,逻辑与 load_best=True 等价但不动 GPU。
+        load_best_model_at_end=False,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
         bf16=True, fp16=False,                    # Blackwell + StarCoder2 都原生 bf16
@@ -149,6 +152,21 @@ def main():
         trainer.train()
 
     trainer.save_model(args.output_dir)
+
+    # 训练结束后,把 trainer 已经跟踪好的最佳 ckpt symlink 到 {output_dir}/best,
+    # 给下游一个稳定路径。等价于 load_best_model_at_end=True 的语义,但不动 GPU。
+    if trainer.is_world_process_zero():
+        best_ckpt = trainer.state.best_model_checkpoint
+        if best_ckpt:
+            link = os.path.join(args.output_dir, "best")
+            if os.path.islink(link):
+                os.remove(link)
+            os.symlink(os.path.basename(best_ckpt), link)
+            print(f"[best-ckpt] {link} -> {os.path.basename(best_ckpt)} "
+                  f"(eval_loss={trainer.state.best_metric:.4f})")
+        else:
+            print("[best-ckpt] no best_model_checkpoint tracked (no eval ran?), "
+                  "downstream should use the last checkpoint manually")
 
 
 if __name__ == "__main__":

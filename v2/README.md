@@ -212,10 +212,11 @@ deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --ds_config v2/configs/ds_zero2_2gpu.json
 
 # 6b) DPO 训练 (推荐从 SFT 检查点继续;ZeRO-3 切参更稳)
+# 注意:--model_path 末尾 /best 是符号链接,指向 SFT 训完按 val_loss 最佳的 epoch ckpt
 deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
-    --model_path /data/work/out/runs/sft_alg_top25 \
+    --model_path /data/work/out/runs/sft_alg_top25/best \
     --output_dir /data/work/out/runs/dpo_gvb \
     --task gvb --augment True \
     --ds_config v2/configs/ds_zero3_2gpu.json
@@ -223,6 +224,10 @@ deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
 # 7) 评测(test 集,双卡 vllm DP)
 bash v2/scripts/dp_eval.sh /data/work/out/evals/dpo_gvb \
     --problems_jsonl /data/work/out/apps/test.jsonl \
-    --model_path /data/work/out/runs/dpo_gvb \
+    --model_path /data/work/out/runs/dpo_gvb/best \
     --do_timing
 ```
+
+> **`/best` 路径约定**:SFT / DPO 训练完后,`output_dir/best` 是符号链接,指向按 val_loss 排名第一的 epoch ckpt(由 `trainer.state.best_model_checkpoint` 标记)。所有下游命令(DPO 接 SFT、评测接 DPO)的 `--model_path` 都从 `/best` 进。
+>
+> 之所以采用 symlink 而非 `load_best_model_at_end=True`:5090 32GB + 3B 模型 + ZeRO-3 优化器状态 + reload 临时显存 → trainer 内部 reload 会 OOM。Symlink 等价于 `load_best=True` 的语义(都是选 val_loss 最低那个 ckpt),但只动文件系统不动 GPU。
