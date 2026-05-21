@@ -101,7 +101,7 @@ v2/
 
 ## 环境部署(5090 ×2,Blackwell sm_120)
 
-分阶段装,不用 yml。只 pin 三个不让步的版本(torch cu128 wheel、vllm 0.8.5、trl ≥ 0.11),其余交给 pip 反向约束。
+分阶段装,不用 yml。只 pin 三个不让步的版本(torch 2.7+cu128 整套、vllm ≥ 0.9、trl ≥ 0.11),其余交给 pip 反向约束。
 
 ```bash
 bash v2/scripts/setup_env.sh
@@ -112,61 +112,117 @@ conda activate /data/conda/envs/sketch5090
 
 ---
 
-## 跑通顺序
+## 前置准备(首次部署)
+
+云主机布局:`/` 留给 OS,大文件全压 `/data`。下面四步只在新机器上做一次。
+
+### 1. 缓存路径 export 进 `~/.bashrc`
+
+不设这五个,HF 模型下载、torch JIT、deepspeed 编译都会落到 `/`,系统盘很快爆。
 
 ```bash
-# 0) 准备数据(读 APPS raw,过滤 + 9:1 拆分,落 jsonl)
-python -m v2.scripts.01_prepare_apps \
-    --apps_root /path/to/APPS/raw \
-    --out_dir out/apps
+cat >> ~/.bashrc <<'EOF'
+export HF_HOME=/data/cache/hf
+export MODELSCOPE_CACHE=/data/cache/modelscope
+export TRITON_CACHE_DIR=/data/cache/triton
+export TORCHINDUCTOR_CACHE_DIR=/data/cache/torchinductor
+export TMPDIR=/data/tmp
+EOF
+mkdir -p /data/cache/{hf,modelscope,triton,torchinductor} /data/tmp
+source ~/.bashrc
+```
 
+### 2. 下载 StarCoder2-3B(~7 GB)
+
+```bash
+# 选 A:HF(优先)
+huggingface-cli download bigcode/starcoder2-3b \
+    --local-dir /data/models/StarCoder2-3B --local-dir-use-symlinks False
+
+# 选 B:HF 被墙时走 modelscope
+python -c "from modelscope import snapshot_download; \
+    snapshot_download('AI-ModelScope/starcoder2-3b', cache_dir='/data/models')"
+```
+
+### 3. 下载 APPS 原始数据(~1.3 GB)
+
+`v2/data/apps_loader.py` 要的是 hendrycks 原版目录结构(`<root>/{train,test}/<id>/{question.txt, input_output.json, ...}`),不是 parquet 封装。
+
+```bash
+huggingface-cli download codeparrot/apps --repo-type dataset \
+    --local-dir /data/datasets/APPS --local-dir-use-symlinks False
+# 核验:应能看到一堆数字编号目录
+ls /data/datasets/APPS/train | head -5
+```
+
+### 4. 生成 jsonl splits
+
+```bash
+python -m v2.scripts.01_prepare_apps \
+    --apps_root /data/datasets/APPS \
+    --out_dir /data/work/out/apps
+```
+
+产 `train.jsonl` / `val.jsonl` / `test.jsonl`(只 interview 难度,9:1 拆 train/val)。几秒,不动 GPU。
+
+---
+
+## 跑通顺序
+
+下面所有 `--out_dir` / `--output_dir` 均建议放 `/data/work/out/...`,避免训练 ckpt 把系统盘塞爆。
+
+```bash
 # 1) Pilot(50 题 × 100 sketch × 3 温度 + 每 sketch 1 code + 执行;双卡 vllm DP)
-bash v2/scripts/dp_sample.sh out/pilot \
-    --problems_jsonl out/apps/train.jsonl \
-    --model_path /path/to/StarCoder2-3B \
+# --exec_workers 可选(默认按 (cpu_count-4)/n_shards 推算,28 核双 shard → 每 shard 12)
+bash v2/scripts/dp_sample.sh /data/work/out/pilot \
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --model_path /data/models/StarCoder2-3B \
     --n_problems 50 --n_per_temp 100 --temps 0.4 0.7 1.0
 
 # 2) 分析 pilot 结果,决定主跑配置
-python -m v2.scripts.03_analyze_pilot --pilot_dir out/pilot
+python -m v2.scripts.03_analyze_pilot --pilot_dir /data/work/out/pilot
 
 # 3) 全量主跑(配置依据 pilot 结果)
-bash v2/scripts/dp_sample.sh out/main \
-    --problems_jsonl out/apps/train.jsonl --model_path .../StarCoder2-3B \
+bash v2/scripts/dp_sample.sh /data/work/out/main \
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --model_path /data/models/StarCoder2-3B \
     --n_problems 99999 --n_per_temp 100 --temps 0.6
 
 # 4) GLM-4-Air 评分 (要 GLM_API_KEY 环境变量)
 export GLM_API_KEY=...
 python -m v2.scripts.04_annotate \
-    --problems_jsonl out/apps/train.jsonl --sample_dir out/main \
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --sample_dir /data/work/out/main \
     --pass_threshold 0.0
 
 # 5) 合并成训练数据
 python -m v2.scripts.05_merge \
-    --problems_jsonl out/apps/train.jsonl --sample_dir out/main \
-    --out out/datasets/train/merged.jsonl
+    --problems_jsonl /data/work/out/apps/train.jsonl \
+    --sample_dir /data/work/out/main \
+    --out /data/work/out/datasets/train/merged.jsonl
 # val 同理:用 val.jsonl + 单独的 sample_dir (val 集也要采样+评分+合并)
 
 # 6a) SFT 训练 (5090 ×2, ZeRO-2 无 offload)
 deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
-    --train_merged out/datasets/train/merged.jsonl \
-    --val_merged out/datasets/val/merged.jsonl \
-    --model_path /path/to/StarCoder2-3B \
-    --output_dir out/runs/sft_alg_top25 \
+    --train_merged /data/work/out/datasets/train/merged.jsonl \
+    --val_merged /data/work/out/datasets/val/merged.jsonl \
+    --model_path /data/models/StarCoder2-3B \
+    --output_dir /data/work/out/runs/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
     --ds_config v2/configs/ds_zero2_2gpu.json
 
 # 6b) DPO 训练 (推荐从 SFT 检查点继续;ZeRO-3 切参更稳)
 deepspeed --num_gpus 2 -m v2.scripts.07_train_dpo \
-    --train_merged out/datasets/train/merged.jsonl \
-    --val_merged out/datasets/val/merged.jsonl \
-    --model_path out/runs/sft_alg_top25 \
-    --output_dir out/runs/dpo_gvb \
+    --train_merged /data/work/out/datasets/train/merged.jsonl \
+    --val_merged /data/work/out/datasets/val/merged.jsonl \
+    --model_path /data/work/out/runs/sft_alg_top25 \
+    --output_dir /data/work/out/runs/dpo_gvb \
     --task gvb --augment True \
     --ds_config v2/configs/ds_zero3_2gpu.json
 
 # 7) 评测(test 集,双卡 vllm DP)
-bash v2/scripts/dp_eval.sh out/evals/dpo_gvb \
-    --problems_jsonl out/apps/test.jsonl \
-    --model_path out/runs/dpo_gvb \
+bash v2/scripts/dp_eval.sh /data/work/out/evals/dpo_gvb \
+    --problems_jsonl /data/work/out/apps/test.jsonl \
+    --model_path /data/work/out/runs/dpo_gvb \
     --do_timing
 ```
