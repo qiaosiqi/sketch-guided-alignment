@@ -203,7 +203,7 @@ python -m v2.scripts.05_merge \
 # val 同理:用 val.jsonl + 单独的 sample_dir (val 集也要采样+评分+合并)
 
 # 6a) SFT 训练 (5090 ×2, ZeRO-2 无 offload)
-deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
+deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/models/StarCoder2-3B \
@@ -212,7 +212,7 @@ deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
     --ds_config v2/configs/ds_zero2_2gpu.json
 
 # 6b) DPO 训练 (推荐从 SFT 检查点继续;ZeRO-3 切参更稳)
-deepspeed --num_gpus 2 -m v2.scripts.07_train_dpo \
+deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/work/out/runs/sft_alg_top25 \

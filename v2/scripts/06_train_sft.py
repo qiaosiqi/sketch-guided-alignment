@@ -2,7 +2,7 @@
 SFT 训练入口。本脚本只是 v2.training.sft_train 的 thin wrapper。
 
 典型用法(5090 ×2 + DeepSpeed ZeRO-2 无 offload):
-    deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
+    deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
         --train_merged /data/work/out/datasets/train/merged.jsonl \
         --val_merged /data/work/out/datasets/val/merged.jsonl \
         --model_path /data/models/StarCoder2-3B \

@@ -173,7 +173,7 @@ python -m v2.scripts.05_merge \
 
 ```bash
 # 论文里的 ALG 风格(按算法分排 top-25%)
-deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
+deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/models/StarCoder2-3B \
@@ -190,7 +190,7 @@ deepspeed --num_gpus 2 -m v2.scripts.06_train_sft \
 
 ```bash
 # 主实验:GvB(本工作核心);DPO 走 ZeRO-3(policy+ref 各 6GB 必须切参才能装下 32GB)
-deepspeed --num_gpus 2 -m v2.scripts.07_train_dpo \
+deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/work/out/runs/sft_alg_top25 \
