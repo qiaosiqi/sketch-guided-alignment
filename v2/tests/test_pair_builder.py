@@ -1,6 +1,6 @@
 """training/pair_builder.py 的 smoke tests。
 
-测试 HvL / QvS / GvB / all 四种 pair 构造在各种候选分布下的行为。
+测试 PvF / QvS / GvB / all 四种 pair 构造在各种候选分布下的行为。
 """
 import random
 
@@ -29,36 +29,7 @@ def rng():
 
 
 # ============================================================
-# HvL
-# ============================================================
-
-def test_hvl_basic(th, rng):
-    cands = [
-        _a(1.0, 100.0, 9),
-        _a(0.9, 200.0, 7),
-        _a(0.1, None, -1),
-    ]
-    pair = sample_pair(cands, "hvl", th, rng)
-    assert pair is not None
-    chosen, rejected = pair
-    assert chosen["pass_ratio"] >= th.theta_high
-    assert rejected["pass_ratio"] <= th.theta_low
-
-
-def test_hvl_unyieldable_all_high(th, rng):
-    cands = [_a(1.0, 100.0, 9), _a(0.95, 200.0, 8)]
-    assert sample_pair(cands, "hvl", th, rng) is None
-    assert not task_yieldable(cands, "hvl", th)
-
-
-def test_hvl_unyieldable_all_mid(th, rng):
-    # 全在 [0.3, 0.7) 之间
-    cands = [_a(0.5, None, -1), _a(0.6, None, -1)]
-    assert sample_pair(cands, "hvl", th, rng) is None
-
-
-# ============================================================
-# PvF (binary baseline)
+# PvF (二元正确性主信号)
 # ============================================================
 
 def test_pvf_basic(th, rng):
@@ -92,25 +63,12 @@ def test_pvf_unyieldable_no_fail(th, rng):
 
 
 def test_pvf_thresholds_ignored(th, rng):
-    """PvF 不应受 θ_high / θ_low / τ 影响 —— 这是它作为 ablation 的关键属性。"""
-    from v2.training.pair_builder import PairThresholds
-    weird = PairThresholds(theta_high=0.01, theta_low=0.99, theta_pass_gvb=0.0, tau=0.0)
+    """PvF 不应受 θ_pass_gvb / τ 影响 —— 它的定义就是 1.0 vs 0.0,不参数化。"""
+    weird = PairThresholds(theta_pass_gvb=0.0, tau=0.0)
     cands = [_a(1.0, 100.0, 9), _a(0.0, None, -1)]
     pair = sample_pair(cands, "pvf", weird, rng)
     assert pair is not None
     assert pair[0]["pass_ratio"] == 1.0 and pair[1]["pass_ratio"] == 0.0
-
-
-def test_all_excludes_pvf(rng):
-    """all 只回退到 hvl/qvs/gvb;只有 PvF 可解时,all 应该失败。"""
-    from v2.training.pair_builder import PairThresholds
-    # 默认阈值下 PvF 成功 → HvL 必然也成功(1.0≥0.7、0.0≤0.3),无法区分。
-    # 故把 HvL 阈值推到 > 1.0 / < 0.0 让 HvL 永远 unyieldable;PvF 仍能配出对。
-    weird = PairThresholds(theta_high=1.5, theta_low=-0.5, theta_pass_gvb=0.5, tau=6.0)
-    cands = [_a(1.0, None, -1), _a(0.0, None, -1)]
-    assert sample_pair(cands, "pvf", weird, rng) is not None
-    # HvL 阈值不可达、QvS 无 runtime、GvB 无评分 → all 应失败
-    assert sample_pair(cands, "all", weird, rng) is None
 
 
 # ============================================================
@@ -189,16 +147,19 @@ def test_gvb_unscored_excluded(th, rng):
 # all
 # ============================================================
 
-def test_all_falls_back(th, rng):
-    """没有 QvS 也没 GvB 时,all 应该从 HvL 找到一对。"""
+def test_all_falls_back_to_pvf(th, rng):
+    """没有 QvS(都没 runtime)也没 GvB(都没 score)时,all 应该靠 PvF 找到一对。"""
     cands = [
-        _a(0.95, None, -1),   # 高 pass,未评分,runtime 缺失 → 只 HvL 可用
-        _a(0.1, None, -1),
+        _a(1.0, None, -1),    # full pass,未评分,无 runtime → 只 PvF 可用
+        _a(0.0, None, -1),
     ]
     pair = sample_pair(cands, "all", th, rng)
     assert pair is not None
+    chosen, rejected = pair
+    assert chosen["pass_ratio"] == 1.0 and rejected["pass_ratio"] == 0.0
 
 
-def test_all_unyieldable(th, rng):
+def test_all_unyieldable_all_partial(th, rng):
+    """全 partial:PvF 不行(没 1.0/0.0)、QvS 不行(没 1.0)、GvB 不行(没 score)→ all 失败。"""
     cands = [_a(0.5, None, -1), _a(0.55, None, -1)]
     assert sample_pair(cands, "all", th, rng) is None

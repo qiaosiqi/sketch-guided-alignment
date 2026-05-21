@@ -43,17 +43,16 @@ Final score: `algo_final = 0.4 · mean(S1..S4) + 0.6 · mean(C1..C5)`.
 The code scoring call includes the sketch as reference (faithfulness is C1, a key dimension).
 
 **DPO preference tasks**
-Five named tasks; each defines how chosen/rejected pairs are formed from a problem's answer pool:
+Four named tasks; each defines how chosen/rejected pairs are formed from a problem's answer pool:
 
 | Task | Chosen | Rejected |
 |------|--------|---------|
-| `hvl` | `pass_ratio ≥ 0.7` | `pass_ratio ≤ 0.3` |
 | `pvf` | `pass_ratio == 1.0` | `pass_ratio == 0.0` |
 | `qvs` | fastest (full-pass only) | slowest (full-pass only) |
-| `gvb` | `algo_final ≥ 6.0` | `algo_final < 6.0` |
-| `all` | tries hvl → qvs → gvb in random order; uses first success | — |
+| `gvb` | `algo_final ≥ 6.0` (with `pass_ratio ≥ 0.5`) | `algo_final < 6.0` (with `pass_ratio ≥ 0.5`) |
+| `all` | tries pvf → qvs → gvb in random order; uses first success | — |
 
-`pvf` is an ablation baseline. Do not conflate it with `hvl` or `qvs`.
+`gvb` is the headline contribution (algorithm-quality signal independent of pass_ratio). `pvf` is the binary correctness signal. The original design also included an `hvl` task (`pass_ratio ≥ 0.7` vs `≤ 0.3`); it was removed on 2026-05-21 after the pilot showed StarCoder2-3B × APPS interview pass_ratio is near-bimodal (92% = 0, 4.6% = 1), making HvL identical to PvF. Do not re-introduce HvL without a base model that fills the partial-credit region.
 
 **SFT selection**
 Top-p% of answers per problem, ranked by `algo_final` / `pass_ratio` / runtime. Dynamic selection (re-sampling per batch step) is the default mode.

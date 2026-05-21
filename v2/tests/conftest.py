@@ -115,7 +115,7 @@ def _ans(sketch: str, code: str, pass_ratio: float, runtime: float | None,
 
 @pytest.fixture
 def merged_two_problems(tmp_path: Path) -> Path:
-    """两道题,每题 6 个候选,覆盖 hvl/qvs/gvb 三类 pair 都能构造。"""
+    """两道题,p1 6 个候选覆盖 pvf/qvs/gvb 三类 pair,p2 3 个候选用于 gvb 兼容。"""
     p1 = {
         "task_id": "p1", "difficulty": "interview", "io_format": "fncall",
         "question": "Q1", "fn_name": "f",

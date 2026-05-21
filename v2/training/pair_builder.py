@@ -1,13 +1,16 @@
 """
-DPO 偏好对构造(partial-credit 版)。
+DPO 偏好对构造。
 
 Tasks:
-    hvl  — High vs Low pass_ratio(partial-credit 主信号)
-    pvf  — Pass vs Fail(binary 退化:pass_ratio == 1.0 vs == 0.0,作 HvL 的消融对照)
+    pvf  — Pass vs Fail(二元正确性主信号:pass_ratio == 1.0 vs == 0.0)
     qvs  — Quick vs Slow runtime,前提两者 pass_ratio == 1.0
     gvb  — Good vs Bad algorithm score,前提两者 pass_ratio >= θ_pass_gvb
-    all  — 从 hvl/qvs/gvb 三类里能构造出哪种就用哪种(随机回退)
-           注意:`all` 不包含 pvf,pvf 是与 hvl 二选一的 ablation,不混入正信号
+    all  — 从 pvf/qvs/gvb 三类里能构造出哪种就用哪种(随机回退)
+
+设计选择(2026-05-21):partial-credit 形态的 HvL 信号在 StarCoder2-3B × APPS
+interview 上分布近似二元(92% pass_ratio=0,4.6% pass_ratio=1,中间几乎为空),
+HvL 与 PvF 的偏好对几乎相同。论文卖点收敛到 sketch-guided 两段式 + GvB,
+HvL 整条信号通道下线,PvF 升格为唯一的"正确性"任务。
 
 接口:
     sample_pair(candidates, task, thresholds, rng) -> (chosen, rejected) | None
@@ -21,13 +24,11 @@ from dataclasses import dataclass
 from typing import Optional, Literal
 
 
-Task = Literal["hvl", "pvf", "qvs", "gvb", "all"]
+Task = Literal["pvf", "qvs", "gvb", "all"]
 
 
 @dataclass
 class PairThresholds:
-    theta_high: float = 0.7         # HvL 高分阈值
-    theta_low: float = 0.3          # HvL 低分阈值
     theta_pass_gvb: float = 0.5     # GvB 双方最低 pass_ratio
     tau: float = 6.0                # GvB 算法分阈值
 
@@ -38,18 +39,10 @@ def _sample_two(rng: random.Random, hi: list, lo: list) -> tuple[dict, dict] | N
     return rng.choice(hi), rng.choice(lo)
 
 
-def sample_hvl(candidates: list[dict], th: PairThresholds, rng: random.Random):
-    hi = [c for c in candidates if c["pass_ratio"] >= th.theta_high]
-    lo = [c for c in candidates if c["pass_ratio"] <= th.theta_low]
-    return _sample_two(rng, hi, lo)
-
-
 def sample_pvf(candidates: list[dict], th: PairThresholds, rng: random.Random):
-    """Binary PvF baseline: chosen.pass_ratio == 1.0 vs rejected.pass_ratio == 0.0.
+    """二元正确性信号:chosen.pass_ratio == 1.0 vs rejected.pass_ratio == 0.0.
 
-    退化版 HvL,用 partial-credit 之前 Code-Optimise 风格的"全过 vs 全挂"作信号。
     `th` 在 PvF 下不参与;保留参数签名只为 sample_pair 统一调度。
-    论文里作为 HvL 的 ablation,用于验证 binary → continuous 这一改造本身的收益。
     """
     del th
     pass_full = [c for c in candidates if c["pass_ratio"] == 1.0]
@@ -86,8 +79,6 @@ def sample_pair(
     rng: Optional[random.Random] = None,
 ) -> Optional[tuple[dict, dict]]:
     rng = rng or random
-    if task == "hvl":
-        return sample_hvl(candidates, thresholds, rng)
     if task == "pvf":
         return sample_pvf(candidates, thresholds, rng)
     if task == "qvs":
@@ -95,8 +86,8 @@ def sample_pair(
     if task == "gvb":
         return sample_gvb(candidates, thresholds, rng)
     if task == "all":
-        # 随机次序尝试三种,第一个成功就返回。pvf 是 ablation 不参与 all。
-        order = ["hvl", "qvs", "gvb"]
+        # 随机次序尝试三种,第一个成功就返回。
+        order = ["pvf", "qvs", "gvb"]
         rng.shuffle(order)
         for t in order:
             res = sample_pair(candidates, t, thresholds, rng)  # type: ignore[arg-type]

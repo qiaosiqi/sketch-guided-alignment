@@ -10,7 +10,7 @@ from v2.training.dpo_dataset import build_dpo_dataset
 def test_dpo_dataset_dynamic_yields_triples(merged_two_problems):
     th = PairThresholds()
     ds = build_dpo_dataset(
-        merged_path=str(merged_two_problems), task="hvl",
+        merged_path=str(merged_two_problems), task="pvf",
         thresholds=th, static=False, seed=1,
     )
     assert len(ds) > 0
@@ -26,7 +26,7 @@ def test_dpo_dataset_dynamic_yields_triples(merged_two_problems):
 def test_dpo_dataset_static(merged_two_problems):
     th = PairThresholds()
     ds = build_dpo_dataset(
-        merged_path=str(merged_two_problems), task="hvl",
+        merged_path=str(merged_two_problems), task="pvf",
         thresholds=th, static=True, seed=1,
     )
     # static 模式直接物化 prompt/chosen/rejected

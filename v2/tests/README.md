@@ -25,7 +25,7 @@ pytest v2/tests/test_parser.py -v
 | `test_timing.py` | execution/timing | CoV 收敛 + 上限保护 |
 | `test_runner.py` | execution/runner | 真跑 fncall + stdio,partial credit,超时(Linux only) |
 | `test_rubric_json.py` | annotation/rubric | judge 输出 JSON 抽取 + clamp |
-| `test_pair_builder.py` | training/pair_builder | HvL/QvS/GvB/all 四类对的构造与边界 |
+| `test_pair_builder.py` | training/pair_builder | PvF/QvS/GvB/all 四类对的构造与边界 |
 | `test_sft_dataset.py` | training/sft_dataset | top-p% 选择,动态 vs 静态 |
 | `test_dpo_dataset.py` | training/dpo_dataset | set_transform 动态产 triple,task 可过滤 |
 | `test_merge.py` | merge/build_dataset | parsed_ok 过滤、score 缺失 → -1 |

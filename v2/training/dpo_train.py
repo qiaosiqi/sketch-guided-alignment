@@ -30,13 +30,11 @@ def parse_args():
     ap.add_argument("--model_path", required=True)
     ap.add_argument("--output_dir", required=True)
 
-    ap.add_argument("--task", required=True, choices=["hvl", "pvf", "qvs", "gvb", "all"])
+    ap.add_argument("--task", required=True, choices=["pvf", "qvs", "gvb", "all"])
     ap.add_argument("--augment", default="True", choices=["True", "False"],
                     help="True=动态采样 pair;False=静态")
 
-    # pair 阈值
-    ap.add_argument("--theta_high", type=float, default=0.7)
-    ap.add_argument("--theta_low", type=float, default=0.3)
+    # pair 阈值(PvF / QvS 不用,只对 GvB 生效)
     ap.add_argument("--theta_pass_gvb", type=float, default=0.5)
     ap.add_argument("--tau", type=float, default=6.0)
 
@@ -93,7 +91,6 @@ def main():
 
     # ---- datasets ----
     th = PairThresholds(
-        theta_high=args.theta_high, theta_low=args.theta_low,
         theta_pass_gvb=args.theta_pass_gvb, tau=args.tau,
     )
     train_ds = build_dpo_dataset(

@@ -3,10 +3,10 @@
 第二版框架,在原 `sketch-guided-alignment/` 论文方法基础上做以下扩展:
 
 1. **数据集换 APPS Interview**(替代 MBPP);competition 难度因基础模型通过率近零、无法构造偏好对而排除
-2. **Partial credit 主信号**:`pass_ratio ∈ [0,1]` 替代二元 pass/fail
+2. **Pass-ratio 门控**:执行得 `pass_ratio ∈ [0,1]`,作为 QvS(仅 1.0 入选)、GvB(≥ θ_pass_gvb 入选)的入门条件,PvF 用极值 1.0 / 0.0 构造二元正确性对
 3. **两段式采样,一段式训练**:采样时分别生成 sketch 和 code(各自评分更准),训练时拼成一段式格式
-4. **多维度评分**:sketch 4 维 + code 5 维,各 0-10,加权求总分
-5. **偏好对重定义**:HvL (High vs Low pass_ratio)、QvS (Quick vs Slow,仅在 pass_ratio=1.0 内比)、GvB (Good vs Bad algorithm score,需 pass_ratio ≥ 阈值);另保留 PvF (Pass vs Fail,二元 1.0/0.0) 作 HvL 的 ablation 对照
+4. **多维度算法评分**:sketch 4 维 + code 5 维,各 0-10,加权求总分,为 **GvB** 偏好对提供独立于 pass_ratio 的"算法质量"信号
+5. **多目标偏好对**:PvF (正确性主信号,1.0 vs 0.0)、QvS (Quick vs Slow,仅在 pass_ratio=1.0 内比 runtime)、GvB (Good vs Bad algorithm score,需 pass_ratio ≥ θ_pass_gvb)
 6. **技术栈升级**:trl/transformers/peft 当前稳定版,采样用 vllm
 
 ---
@@ -20,8 +20,6 @@
 | 采样数 | 100 / 题 | sketch + code 各一遍,共 200 次推理 |
 | 采样温度 | 0.6 起步 | 多温度由 pilot 决定 |
 | 输出长度 | 1024 tokens | 超 10% 截断再升 2048 |
-| `θ_high` (HvL 高分阈值) | 0.7 | pass_ratio 高于此算 high |
-| `θ_low` (HvL 低分阈值) | 0.3 | pass_ratio 低于此算 low |
 | `θ_pass_gvb` | 0.5 | GvB 双方都得满足的最低 pass_ratio |
 | `τ` (GvB 算法分阈值) | 6.0 | 总分 ≥ τ 为 Good,< τ 为 Bad |
 | Sketch / Code 权重 | 0.4 / 0.6 | `final = 0.4·mean(S) + 0.6·mean(C)` |
@@ -49,23 +47,24 @@ APPS raw
    │
    ▼ training/{pair_builder.py, train.py}
    │      ├─ SFT 模式:按 final score 取 top-p%
-   │      └─ DPO 模式:HvL / QvS / GvB / ALL 偏好对
+   │      └─ DPO 模式:PvF / QvS / GvB / ALL 偏好对
    │
    ▼ evaluation/eval_sampling.py  ──→ 同样的 sampling→execution→metrics,在 test 集上
 ```
 
 ---
 
-## 偏好对正式定义(partial-credit 版)
+## 偏好对正式定义
 
 对一道题的候选解集合 $\mathcal{Y}(x)$,每个 $y \in \mathcal{Y}$ 有 `(pass_ratio, runtime, algorithm_score)` 三元组。
 
-- **HvL**:从 $\{y : \text{pass\_ratio} \geq \theta_\text{high}\}$ 中抽 $y_w$,从 $\{y : \text{pass\_ratio} \leq \theta_\text{low}\}$ 中抽 $y_l$
-- **PvF**(ablation):从 $\{y : \text{pass\_ratio} = 1.0\}$ 中抽 $y_w$,从 $\{y : \text{pass\_ratio} = 0.0\}$ 中抽 $y_l$。不受任何阈值控制,作为 HvL 的二元退化对照
+- **PvF**(正确性主信号):从 $\{y : \text{pass\_ratio} = 1.0\}$ 中抽 $y_w$,从 $\{y : \text{pass\_ratio} = 0.0\}$ 中抽 $y_l$;不受任何阈值控制
 - **QvS**:从 $\{y : \text{pass\_ratio} = 1.0\}$ 中按 runtime 升序排,抽前段为 $y_w$、后段为 $y_l$
-- **GvB**:从 $\{y : \text{pass\_ratio} \geq \theta_\text{pass\_gvb}\}$ 中按 algorithm_score 分 $\mathcal{G} = \{\cdot \geq \tau\}$、$\mathcal{B} = \{\cdot < \tau\}$,各抽一个
+- **GvB**(论文核心卖点):从 $\{y : \text{pass\_ratio} \geq \theta_\text{pass\_gvb}\}$ 中按 algorithm_score 分 $\mathcal{G} = \{\cdot \geq \tau\}$、$\mathcal{B} = \{\cdot < \tau\}$,各抽一个
 
 题目级过滤规则:对每类偏好对,只保留**能至少构造出一对**的题(否则该题对该信号无意义,跳过)。
+
+> 设计回溯(2026-05-21):原方案曾计划用 partial-credit HvL 作为主信号(`pass_ratio ≥ 0.7` vs `≤ 0.3`),但 pilot 实测 StarCoder2-3B × APPS interview 上 pass_ratio 分布近似二元(92% = 0,4.6% = 1,中间几乎为空),HvL 与 PvF 偏好对几乎相同,partial-credit 信号在该 setting 下无增量。故 HvL 整条信号通道下线,PvF 升格为唯一的"正确性"任务。
 
 ---
 
@@ -93,7 +92,7 @@ v2/
 - [x] Samplers + pilot (Phase 3,vllm 优先 / HF fallback)
 - [x] Judge + merge (Phase 4,GLM-4-Air,9 维)
 - [x] SFT (Phase 5a,trl 0.11+,DynamicSFTCollator)
-- [x] DPO (Phase 5b,HvL/QvS/GvB/ALL,动态 pair 采样)
+- [x] DPO (Phase 5b,PvF/QvS/GvB/ALL,动态 pair 采样)
 - [x] Evaluation (pass@k strict + mean_pass_ratio + runtime + algo_score)
 - [ ] Sanity check + smoke tests
 

@@ -7,15 +7,15 @@
 | 路径 | 角色 |
 |---|---|
 | `sketch-guided-alignment/` | 原论文(Code-Optimise + 论文初稿)的参考实现,**仅作对照**,不维护 |
-| `v2/` | 重写的当前框架,目标 **APPS Interview**,**partial-credit pass_ratio** 主信号,**两段式 sketch+code 采样**,9 维评分,HvL / QvS / GvB DPO pair |
+| `v2/` | 重写的当前框架,目标 **APPS Interview**,**两段式 sketch+code 采样**,9 维评分,**PvF / QvS / GvB DPO pair**(GvB 为论文核心卖点) |
 | `论文/` | 论文草稿 PDF |
 
 **新论文方向**(在 v2 上做的工作,与参考论文的区别):
 1. 数据集从 MBPP 换成 APPS Interview(比 MBPP 难,更适合考验算法质量信号;competition 因通过率近零被排除)
-2. 评测引入 `pass_ratio ∈ [0, 1]` 连续主信号,替代 binary pass/fail
+2. 评测产 `pass_ratio ∈ [0, 1]`,作为 QvS / GvB 的门控阈值(QvS 仅 1.0 入选,GvB 需 ≥ θ_pass_gvb)
 3. 采样改两段式(先 sketch、后 code),sketch 与 code 分开评分
-4. Judge rubric 改成 9 维细粒度(4 维 sketch + 5 维 code),加权聚合
-5. DPO 偏好对在 partial-credit 下重定义(HvL 替代 PvF,QvS 仅在 pass_ratio=1.0 内,GvB 需 pass_ratio ≥ θ)
+4. Judge rubric 改成 9 维细粒度(4 维 sketch + 5 维 code),加权聚合,为 GvB 提供独立于 pass_ratio 的算法质量信号
+5. DPO 走多目标偏好对:**PvF**(二元正确性,1.0 vs 0.0)、**QvS**(runtime,全 pass 内比)、**GvB**(算法分,论文核心卖点)
 
 ---
 
@@ -198,7 +198,7 @@ deepspeed --num_gpus 2 -m v2.scripts.07_train_dpo \
     --task gvb --augment True \
     --ds_config v2/configs/ds_zero3_2gpu.json   # ZeRO-3 无 offload + bf16
 
-# 对照:HvL / QvS / ALL —— 只改 --task 和 --output_dir
+# 对照:PvF / QvS / ALL —— 只改 --task 和 --output_dir
 # OOM 时加 --use_lora(也可切回 ds_zero2_2gpu.json,LoRA 模式下 ref 与 policy 共享)
 ```
 
@@ -237,11 +237,10 @@ bash v2/scripts/dp_eval.sh /data/work/out/evals/sft_alg \
 | SFT-PASS-25 | `--sort_by pass_ratio --top_p 25` |
 | SFT-ALG-25 | `--sort_by algo_final --top_p 25` |
 | SFT-ALG-100 | `--sort_by algo_final --top_p 100` |
-| DPO-HvL | `--task hvl`(从 SFT-ALG-25 继续,partial-credit 主信号) |
-| DPO-PvF | `--task pvf`(binary 退化:1.0 vs 0.0,作 HvL 的 ablation) |
-| DPO-QvS | `--task qvs` |
-| DPO-GvB | `--task gvb` (主实验) |
-| DPO-ALL | `--task all`(不含 pvf;pvf 只用作消融) |
+| DPO-PvF | `--task pvf`(二元正确性主信号:1.0 vs 0.0,从 SFT-ALG-25 继续) |
+| DPO-QvS | `--task qvs`(runtime,仅 pass_ratio=1.0 内比) |
+| DPO-GvB | `--task gvb`(算法分,**论文核心卖点**) |
+| DPO-ALL | `--task all`(pvf / qvs / gvb 随机回退,多目标融合) |
 
 ---
 
@@ -252,7 +251,7 @@ bash v2/scripts/dp_eval.sh /data/work/out/evals/sft_alg \
 - [x] Phase 3 — Sampling(两段式,vllm + HF 双后端)
 - [x] Phase 4 — Judge(GLM-4-Air + 9 维 rubric)+ Merge
 - [x] Phase 5a — SFT(trl 0.11+,DynamicSFTCollator)
-- [x] Phase 5b — DPO(HvL / QvS / GvB / ALL,动态 pair 采样)
+- [x] Phase 5b — DPO(PvF / QvS / GvB / ALL,动态 pair 采样)
 - [x] Phase 5c — Evaluation(pass@k + mean_pass_ratio + runtime + algo)
 - [x] Smoke tests — 87 个用例(78 Win + 9 Linux-only)
 
