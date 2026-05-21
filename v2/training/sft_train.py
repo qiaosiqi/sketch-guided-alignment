@@ -61,6 +61,9 @@ def parse_args():
     ap.add_argument("--ds_config", default=None, help="DeepSpeed config 路径")
 
     ap.add_argument("--seed", type=int, default=1)
+    # DeepSpeed launcher 会给每个 rank 注入 --local_rank=N,argparse 严格模式会拒收,
+    # 哑收即可(trl 内部自己从 LOCAL_RANK 环境变量读)。
+    ap.add_argument("--local_rank", type=int, default=-1, help=argparse.SUPPRESS)
     return ap.parse_args()
 
 
