@@ -68,7 +68,7 @@ Top-p% of answers per problem, ranked by `algo_final` / `pass_ratio` / runtime. 
 
 ## Environment
 
-- **Hardware target**: 2 × NVIDIA RTX 5090 32G (Blackwell sm_120), bf16. SFT: DeepSpeed ZeRO-2 no offload (`ds_zero2_2gpu.json`); DPO: DeepSpeed ZeRO-3 no offload (`ds_zero3_2gpu.json`) — DPO needs ZeRO-3 because policy+ref params (12GB total) don't fit alongside grads/optim on a 32GB card.
+- **Hardware target**: 2 × NVIDIA RTX 5090 32G (Blackwell sm_120), bf16. SFT: DeepSpeed ZeRO-3 (`ds_zero3_2gpu.json`) — ZeRO-2 hits OOM on Adam state init for a 3B model on 32G cards. DPO: DeepSpeed ZeRO-2 + CPU optimizer offload (`ds_zero2_2gpu_offload.json`) **plus** `precompute_ref_log_probs=True` — TRL forbids precompute under ZeRO-3, so we use ZeRO-2 and offload Adam state to the 240GB host RAM to free GPU. Precompute then drops the 6GB reference model from GPU after init. All training commands also need `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` to reduce 5090 fragmentation pressure.
 - **Base model**: StarCoder2-3B (default; paths are config-driven).
 - **Judge model**: GLM-4-Air via ZhipuAI HTTP API.
 - **Sampling backend**: vLLM (primary) with HF Transformers fallback.

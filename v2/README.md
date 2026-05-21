@@ -202,24 +202,32 @@ python -m v2.scripts.05_merge \
     --out /data/work/out/datasets/train/merged.jsonl
 # val 同理:用 val.jsonl + 单独的 sample_dir (val 集也要采样+评分+合并)
 
-# 6a) SFT 训练 (5090 ×2, ZeRO-2 无 offload)
+# 6a) SFT 训练 (5090 ×2, ZeRO-3;ZeRO-2 在 Adam init 就 OOM)
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/models/StarCoder2-3B \
     --output_dir /data/work/out/runs/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
-    --ds_config v2/configs/ds_zero2_2gpu.json
+    --per_device_train_batch_size 1 --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 16 \
+    --ds_config v2/configs/ds_zero3_2gpu.json
 
-# 6b) DPO 训练 (推荐从 SFT 检查点继续;ZeRO-3 切参更稳)
-# 注意:--model_path 末尾 /best 是符号链接,指向 SFT 训完按 val_loss 最佳的 epoch ckpt
+# 6b) DPO 训练 (推荐从 SFT 检查点继续)
+# 配置:ZeRO-2 + CPU offload optim + precompute_ref_log_probs
+#   - TRL 禁止 ZeRO-3 + precompute,但不 precompute 又装不下 policy + ref 两个 3B
+#   - 解法:ZeRO-2 把 12GB Adam state 甩到 CPU,腾出 GPU 给 policy + ref;precompute 后释放 ref
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/work/out/runs/sft_alg_top25/best \
     --output_dir /data/work/out/runs/dpo_gvb \
     --task gvb --augment True \
-    --ds_config v2/configs/ds_zero3_2gpu.json
+    --per_device_train_batch_size 1 --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 16 \
+    --ds_config v2/configs/ds_zero2_2gpu_offload.json
 
 # 7) 评测(test 集,双卡 vllm DP)
 bash v2/scripts/dp_eval.sh /data/work/out/evals/dpo_gvb \

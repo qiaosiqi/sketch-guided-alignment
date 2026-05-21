@@ -3,11 +3,14 @@ DPO 训练入口。基于 trl 0.11+ 的 DPOTrainer / DPOConfig。
 
 关键设计:
 - ref_model 默认与 policy 同一份(trl 内部会 deepcopy 或 reuse 加 PEFT adapter)
-- 5090 ×2 bf16:policy + ref 各 6GB 参数。ZeRO-2 不切参,2×32GB 上每卡要
-  同时持有 12GB 参数 + 6GB 梯度切片(切了)+ 12GB optim 切片(切了)+ 激活,
-  非常临界 → 默认走 ZeRO-3 (ds_zero3_2gpu.json) 把参数也切到 2 卡。
-  极端 OOM 再 --use_lora(LoRA 模式下 ref 复用 policy 关闭 adapter,显存最省)
-- 动态采样靠 dpo_dataset.py 的 set_transform 实现
+- 5090 ×2 bf16 + 3B 模型显存账(每卡):
+    policy params 6GB + grads 3GB(ZeRO-2 切半)+ Adam state 12GB(CPU offload)
+    + ref model 6GB(precompute 后释放)+ 激活/buffer ~5GB ≈ 训练时 17GB
+  → 默认走 ds_zero2_2gpu_offload.json + precompute_ref_log_probs=True。
+  TRL 禁止 ZeRO-3 + precompute 组合,所以只能 ZeRO-2,Adam state 必须移到 CPU
+  才能腾出 GPU 给 policy + ref(precompute 前两者都在 GPU)。
+- 动态采样(set_transform)与 TRL 0.15 的预 tokenize 不兼容,目前 --augment True
+  会撞 KeyError;主跑前需要切到静态扩展数据策略,smoke 用 --augment False
 """
 from __future__ import annotations
 import argparse

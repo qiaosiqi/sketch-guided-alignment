@@ -9,7 +9,7 @@ DPO 训练入口。本脚本是 v2.training.dpo_train 的 thin wrapper。
         --output_dir /data/work/out/runs/dpo_gvb_from_sft \
         --task gvb \
         --augment True \
-        --ds_config v2/configs/ds_zero3_2gpu.json
+        --ds_config v2/configs/ds_zero2_2gpu_offload.json
 
 如全参数 OOM,加 --use_lora(切回 ZeRO-2 也行,LoRA 显存最省)。
 """

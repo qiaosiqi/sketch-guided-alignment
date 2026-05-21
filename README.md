@@ -21,7 +21,7 @@
 
 ## 1. 快速部署(Linux 云主机,2 × RTX 5090-32G;A800-80G 见 git log A800 分支)
 
-> **5090 ×2 最小闭环**:BASE + SFT-ALG-25 + DPO-GvB。采样/训练全程 bf16(Blackwell + StarCoder2 都原生)。SFT 用 `ds_zero2_2gpu.json`(ZeRO-2 无 offload);DPO 默认 `ds_zero3_2gpu.json`(ZeRO-3 无 offload,policy+ref 各 6GB 必须切参);采样/评测用 `dp_sample.sh` / `dp_eval.sh`(数据并行起 2 个 vLLM 进程各占一卡,产物 cat 合并)。评分 `04_annotate --concurrency 50`。
+> **5090 ×2 最小闭环**:BASE + SFT-ALG-25 + DPO-GvB。采样/训练全程 bf16(Blackwell + StarCoder2 都原生)。SFT 用 `ds_zero3_2gpu.json`(ZeRO-2 在 3B 模型 + 32G 卡上 Adam init 即 OOM);DPO 用 `ds_zero2_2gpu_offload.json`(ZeRO-2 + Adam 状态 CPU offload),并配合 `precompute_ref_log_probs=True` 释放 ref model(TRL 禁止 ZeRO-3 + precompute 组合)。所有训练命令都需要 `PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True` 减少 5090 碎片压力。采样/评测用 `dp_sample.sh` / `dp_eval.sh`(数据并行起 2 个 vLLM 进程各占一卡,产物 cat 合并)。评分 `04_annotate --concurrency 50`。
 
 > **路径约定**:仓库 clone 到 `/data/code/sketch-guided-clm-alignment`,产物全部落 `/data/work/out/`,模型在 `/data/models/`,APPS 数据在 `/data/datasets/APPS`,HF/MS cache 用 `/data/hf_cache`。根盘 `/` 只剩 ~24GB,放任何大件都会爆。
 
@@ -169,10 +169,12 @@ python -m v2.scripts.05_merge \
     --out /data/work/out/datasets/val/merged.jsonl
 ```
 
-### 2.6 SFT 训练(~4-8 小时,DeepSpeed ZeRO-2 双卡 5090)
+### 2.6 SFT 训练(~4-8 小时,DeepSpeed ZeRO-3 双卡 5090)
 
 ```bash
 # 论文里的 ALG 风格(按算法分排 top-25%)
+# 必须带 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True 减少 5090 显存碎片
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
@@ -180,26 +182,34 @@ deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --output_dir /data/work/out/runs/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
     --num_train_epochs 10 \
-    --ds_config v2/configs/ds_zero2_2gpu.json   # ZeRO-2 无 offload + bf16
+    --per_device_train_batch_size 1 --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 16 \
+    --ds_config v2/configs/ds_zero3_2gpu.json   # 3B + 32G 必须 ZeRO-3(ZeRO-2 在 Adam init 就 OOM)
 
 # 对照实验:SPD(按 runtime),PASS(按 pass_ratio)
 # 只改 --sort_by 即可
 ```
 
-### 2.7 DPO 训练(~4-8 小时,接 SFT 检查点继续)
+### 2.7 DPO 训练(~6-12 小时,接 SFT 检查点继续;CPU offload optim 比 SFT 慢)
 
 ```bash
-# 主实验:GvB(本工作核心);DPO 走 ZeRO-3(policy+ref 各 6GB 必须切参才能装下 32GB)
+# 主实验:GvB(本工作核心)
+# 配置说明:ZeRO-2 + CPU offload optim + precompute_ref_log_probs
+#   - SFT 用的 ZeRO-3 在 DPO 上不行:TRL 禁止 ZeRO-3 + precompute_ref_log_probs 组合
+#   - 不 precompute 又装不下 policy + ref 两个 3B 模型 → 必须 precompute
+#   - 解法:ZeRO-2 把 12GB Adam state 甩到 CPU(240GB 主存),腾出 GPU 给 policy + ref
+PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
     --val_merged /data/work/out/datasets/val/merged.jsonl \
     --model_path /data/work/out/runs/sft_alg_top25/best \
     --output_dir /data/work/out/runs/dpo_gvb \
     --task gvb --augment True \
-    --ds_config v2/configs/ds_zero3_2gpu.json   # ZeRO-3 无 offload + bf16
+    --per_device_train_batch_size 1 --per_device_eval_batch_size 1 \
+    --gradient_accumulation_steps 16 \
+    --ds_config v2/configs/ds_zero2_2gpu_offload.json
 
 # 对照:PvF / QvS / ALL —— 只改 --task 和 --output_dir
-# OOM 时加 --use_lora(也可切回 ds_zero2_2gpu.json,LoRA 模式下 ref 与 policy 共享)
 ```
 
 ### 2.8 评测(test 集,~3-6 小时,双卡 vllm DP)
