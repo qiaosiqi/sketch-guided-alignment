@@ -31,14 +31,27 @@ for arg in "$@"; do
     esac
 done
 
+# 同 dp_sample.sh:两 shard 各占自己的 torch.compile / triton 缓存子目录,
+# 避免同时编译同一份 graph 时抢同一文件造成 truncated-pickle crash。
+TORCHINDUCTOR_BASE="${TORCHINDUCTOR_CACHE_DIR:-/data/cache/torchinductor}"
+TRITON_BASE="${TRITON_CACHE_DIR:-/data/cache/triton}"
+mkdir -p "$TORCHINDUCTOR_BASE/shard0" "$TORCHINDUCTOR_BASE/shard1" \
+         "$TRITON_BASE/shard0" "$TRITON_BASE/shard1"
+
 echo "[dp_eval] launching 2 shards into $OUT_DIR"
 
-CUDA_VISIBLE_DEVICES=0 python -m v2.evaluation.eval_sampling \
+CUDA_VISIBLE_DEVICES=0 \
+TORCHINDUCTOR_CACHE_DIR="$TORCHINDUCTOR_BASE/shard0" \
+TRITON_CACHE_DIR="$TRITON_BASE/shard0" \
+python -m v2.evaluation.eval_sampling \
     --out_dir "$SHARD0_DIR" --shard_id 0 --n_shards 2 "$@" \
     > "$SHARD0_DIR/stdout.log" 2> "$SHARD0_DIR/stderr.log" &
 PID0=$!
 
-CUDA_VISIBLE_DEVICES=1 python -m v2.evaluation.eval_sampling \
+CUDA_VISIBLE_DEVICES=1 \
+TORCHINDUCTOR_CACHE_DIR="$TORCHINDUCTOR_BASE/shard1" \
+TRITON_CACHE_DIR="$TRITON_BASE/shard1" \
+python -m v2.evaluation.eval_sampling \
     --out_dir "$SHARD1_DIR" --shard_id 1 --n_shards 2 "$@" \
     > "$SHARD1_DIR/stdout.log" 2> "$SHARD1_DIR/stderr.log" &
 PID1=$!
