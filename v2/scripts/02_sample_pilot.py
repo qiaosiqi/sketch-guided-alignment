@@ -19,16 +19,20 @@ Pilot 采样:50 题 × 100 sketch × 3 温度 (0.4, 0.7, 1.0),每个有效 sketc
         --temps 0.4 0.7 1.0
 """
 from __future__ import annotations
+# 在任何 transformers / tokenizers / sampling 模块 import 之前关掉 tokenizers 内部
+# 多线程 —— 后续 execution 阶段会 fork 子进程,fork-after-parallelism 会触发警告
+# 并自动 disable tokenizer 并行,影响性能。
+import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import argparse
 import json
 import logging
-import os
 import random
-from dataclasses import asdict
 
-from ..data.schema import Problem, ExecutionResult
+from ..data.schema import Problem
 from ..sampling import build_backend, sample_sketches, sample_codes
-from ..execution import run_one_solution
+from ..execution import run_executions_parallel
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -55,56 +59,6 @@ def select_pilot_problems(all_probs: list[Problem], n: int, seed: int) -> list[P
     return pool[:n]
 
 
-def run_executions(codes_path: str, problems_by_id: dict[str, Problem], out_path: str):
-    """逐条读 codes.jsonl,对 parsed_ok 的 code 跑 execution,append 写出 exec.jsonl。"""
-    done_keys = set()
-    if os.path.exists(out_path):
-        with open(out_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    obj = json.loads(line)
-                    done_keys.add((obj["task_id"], obj["sample_id"], obj["code_id"]))
-                except Exception:
-                    pass
-
-    with open(codes_path, "r", encoding="utf-8") as f, open(out_path, "a", encoding="utf-8") as fout:
-        for i, line in enumerate(f, 1):
-            c = json.loads(line)
-            key = (c["task_id"], c["sample_id"], c.get("code_id", 0))
-            if key in done_keys:
-                continue
-            if not c.get("parsed_ok"):
-                # 不能跑的 code 也写一条 0 分记录
-                er = ExecutionResult(
-                    task_id=c["task_id"], sample_id=c["sample_id"], code_id=c.get("code_id", 0),
-                    n_tests=0, n_passed=0, pass_ratio=0.0,
-                    per_test_pass=[], error="unparsable_code",
-                )
-                fout.write(json.dumps(asdict(er), ensure_ascii=False) + "\n")
-                continue
-            problem = problems_by_id.get(c["task_id"])
-            if problem is None:
-                continue
-            try:
-                er = run_one_solution(
-                    problem, c["code"],
-                    timeout_per_test=3.0,
-                    do_timing=False,        # pilot 不测时,只看 pass_ratio
-                    sample_id=c["sample_id"],
-                    code_id=c.get("code_id", 0),
-                )
-            except Exception as e:
-                er = ExecutionResult(
-                    task_id=c["task_id"], sample_id=c["sample_id"], code_id=c.get("code_id", 0),
-                    n_tests=len(problem.inputs), n_passed=0, pass_ratio=0.0,
-                    per_test_pass=[False] * len(problem.inputs), error=f"runner_crash: {e}",
-                )
-            fout.write(json.dumps(asdict(er), ensure_ascii=False) + "\n")
-            fout.flush()
-            if i % 50 == 0:
-                log.info(f"executed {i} codes")
-
-
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--problems_jsonl", required=True, help="train.jsonl from apps_loader")
@@ -120,6 +74,10 @@ def main():
     # 数据并行分片:在 5090×2 上,两个进程各占一卡,各跑题目子集,产物事后 cat 合并
     ap.add_argument("--shard_id", type=int, default=0, help="本进程负责的分片编号 [0, n_shards)")
     ap.add_argument("--n_shards", type=int, default=1, help="总分片数;1=不分片")
+    ap.add_argument(
+        "--exec_workers", type=int, default=None,
+        help="execution 阶段线程并发数,默认按 (cpu_count-4)/n_shards 推算",
+    )
     args = ap.parse_args()
     assert 0 <= args.shard_id < args.n_shards, "shard_id 必须在 [0, n_shards) 内"
 
@@ -177,9 +135,18 @@ def main():
 
     backend.shutdown()
 
-    # 4) Execution
+    # 4) Execution (并发,pilot 不测时)
     exec_path = os.path.join(args.out_dir, "exec.jsonl")
-    run_executions(codes_path, problems_by_id, exec_path)
+    # 让 default_exec_workers 按 n_shards 推算预算
+    os.environ.setdefault("V2_N_SHARDS", str(args.n_shards))
+    run_executions_parallel(
+        codes_path=codes_path,
+        problems_by_id=problems_by_id,
+        out_path=exec_path,
+        do_timing=False,
+        timeout_per_test=3.0,
+        max_workers=args.exec_workers,
+    )
     log.info("execution done")
 
 

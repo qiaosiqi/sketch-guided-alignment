@@ -13,15 +13,18 @@
     {out_dir}/scores.jsonl (可选)
 """
 from __future__ import annotations
+# 必须在 transformers / tokenizers / sampling import 之前设;否则 execution 阶段
+# fork 子进程时会触发 tokenizers 警告并自禁用并行。
+import os
+os.environ.setdefault("TOKENIZERS_PARALLELISM", "false")
+
 import argparse
 import json
 import logging
-import os
-from dataclasses import asdict
 
-from ..data.schema import Problem, ExecutionResult
+from ..data.schema import Problem
 from ..sampling import build_backend, sample_sketches, sample_codes
-from ..execution import run_one_solution
+from ..execution import run_executions_parallel
 
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(name)s: %(message)s")
@@ -34,55 +37,6 @@ def load_problems(path: str) -> list[Problem]:
         for line in f:
             out.append(Problem(**json.loads(line)))
     return out
-
-
-def run_executions(codes_path: str, problems_by_id: dict[str, Problem],
-                   out_path: str, do_timing: bool = True):
-    done_keys = set()
-    if os.path.exists(out_path):
-        with open(out_path, "r", encoding="utf-8") as f:
-            for line in f:
-                try:
-                    obj = json.loads(line)
-                    done_keys.add((obj["task_id"], obj["sample_id"], obj.get("code_id", 0)))
-                except Exception:
-                    pass
-
-    with open(codes_path, "r", encoding="utf-8") as f, open(out_path, "a", encoding="utf-8") as fout:
-        for i, line in enumerate(f, 1):
-            c = json.loads(line)
-            key = (c["task_id"], c["sample_id"], c.get("code_id", 0))
-            if key in done_keys:
-                continue
-            if not c.get("parsed_ok"):
-                er = ExecutionResult(
-                    task_id=c["task_id"], sample_id=c["sample_id"], code_id=c.get("code_id", 0),
-                    n_tests=0, n_passed=0, pass_ratio=0.0,
-                    per_test_pass=[], error="unparsable_code",
-                )
-                fout.write(json.dumps(asdict(er), ensure_ascii=False) + "\n")
-                continue
-            problem = problems_by_id.get(c["task_id"])
-            if problem is None:
-                continue
-            try:
-                er = run_one_solution(
-                    problem, c["code"],
-                    timeout_per_test=3.0,
-                    do_timing=do_timing,
-                    sample_id=c["sample_id"],
-                    code_id=c.get("code_id", 0),
-                )
-            except Exception as e:
-                er = ExecutionResult(
-                    task_id=c["task_id"], sample_id=c["sample_id"], code_id=c.get("code_id", 0),
-                    n_tests=len(problem.inputs), n_passed=0, pass_ratio=0.0,
-                    per_test_pass=[False] * len(problem.inputs), error=f"runner_crash: {e}",
-                )
-            fout.write(json.dumps(asdict(er), ensure_ascii=False) + "\n")
-            fout.flush()
-            if i % 100 == 0:
-                log.info(f"executed {i} codes")
 
 
 def main():
@@ -100,6 +54,10 @@ def main():
     # 数据并行分片(对应 5090×2 拓扑)
     ap.add_argument("--shard_id", type=int, default=0)
     ap.add_argument("--n_shards", type=int, default=1)
+    ap.add_argument(
+        "--exec_workers", type=int, default=None,
+        help="execution 阶段线程并发数,默认按 (cpu_count-4)/n_shards 推算",
+    )
     args = ap.parse_args()
     assert 0 <= args.shard_id < args.n_shards, "shard_id 必须在 [0, n_shards) 内"
 
@@ -138,7 +96,15 @@ def main():
     backend.shutdown()
 
     exec_path = os.path.join(args.out_dir, "exec.jsonl")
-    run_executions(codes_path, problems_by_id, exec_path, do_timing=args.do_timing)
+    os.environ.setdefault("V2_N_SHARDS", str(args.n_shards))
+    run_executions_parallel(
+        codes_path=codes_path,
+        problems_by_id=problems_by_id,
+        out_path=exec_path,
+        do_timing=args.do_timing,
+        timeout_per_test=3.0,
+        max_workers=args.exec_workers,
+    )
     log.info("eval sampling done")
 
 
