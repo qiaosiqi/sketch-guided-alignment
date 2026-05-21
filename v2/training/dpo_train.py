@@ -9,8 +9,9 @@ DPO 训练入口。基于 trl 0.11+ 的 DPOTrainer / DPOConfig。
   → 默认走 ds_zero2_2gpu_offload.json + precompute_ref_log_probs=True。
   TRL 禁止 ZeRO-3 + precompute 组合,所以只能 ZeRO-2,Adam state 必须移到 CPU
   才能腾出 GPU 给 policy + ref(precompute 前两者都在 GPU)。
-- 动态采样(set_transform)与 TRL 0.15 的预 tokenize 不兼容,目前 --augment True
-  会撞 KeyError;主跑前需要切到静态扩展数据策略,smoke 用 --augment False
+- `--augment True` 走 K-pair 静态扩展(K = --pairs_per_problem,默认 = num_train_epochs);
+  内部把 trainer 的 num_train_epochs 调整为 max(1, E // K),保证总训练量与原 dynamic
+  模式(每 epoch 重抽 pair)等价。`--augment False` 退化为每题 1 个 pair 的经典静态。
 """
 from __future__ import annotations
 import argparse
@@ -35,7 +36,11 @@ def parse_args():
 
     ap.add_argument("--task", required=True, choices=["pvf", "qvs", "gvb", "all"])
     ap.add_argument("--augment", default="True", choices=["True", "False"],
-                    help="True=动态采样 pair;False=静态")
+                    help="True=K-pair 静态扩展(每题预采 K 个 pair);False=每题 1 个 pair。"
+                         "K 由 --pairs_per_problem 控制,默认与 --num_train_epochs 同步")
+    ap.add_argument("--pairs_per_problem", type=int, default=None,
+                    help="K: --augment True 时每题预采 K 个 pair。默认 = --num_train_epochs,"
+                         "保证总训练量(N×K×effective_E)与原 dynamic E=num_train_epochs 等价")
 
     # pair 阈值(PvF / QvS 不用,只对 GvB 生效)
     ap.add_argument("--theta_pass_gvb", type=float, default=0.5)
@@ -99,14 +104,30 @@ def main():
     th = PairThresholds(
         theta_pass_gvb=args.theta_pass_gvb, tau=args.tau,
     )
+    # K-pair 扩展 + 联动调整 epoch 数,保证总训练量与原 dynamic 模式等价:
+    #   原 dynamic: 每 epoch N 步,跑 E epoch → 总步数 = N × E
+    #   新静态扩展:dataset N × K 行,跑 E' epoch → 总步数 = N × K × E'
+    #   令 K × E' = E,即 E' = max(1, E // K),保持总训练量不变
+    if args.augment == "True":
+        K = args.pairs_per_problem if args.pairs_per_problem is not None else args.num_train_epochs
+        K = max(1, K)
+        effective_epochs = max(1, args.num_train_epochs // K)
+    else:
+        K = 1
+        effective_epochs = args.num_train_epochs
+    print(f"[DPO-augment] augment={args.augment} K={K} "
+          f"num_train_epochs(user)={args.num_train_epochs} "
+          f"num_train_epochs(effective)={effective_epochs} "
+          f"(total step count target ≈ N × {K * effective_epochs})")
+
     train_ds = build_dpo_dataset(
         merged_path=args.train_merged, task=args.task, thresholds=th,
-        static=(args.augment == "False"), seed=args.seed,
+        pairs_per_problem=K, seed=args.seed,
     )
+    # val 始终单 pair —— eval_loss 在跨 epoch 间可比,需要 val 集稳定
     val_ds = build_dpo_dataset(
         merged_path=args.val_merged, task=args.task, thresholds=th,
-        static=True,   # val 始终静态
-        seed=args.seed,
+        pairs_per_problem=1, seed=args.seed,
     )
 
     # ---- trl config ----
@@ -118,7 +139,7 @@ def main():
         # ref_model 冻结,logps 在哪算都一样,研究语义零失真。
         precompute_ref_log_probs=True,
         learning_rate=args.learning_rate,
-        num_train_epochs=args.num_train_epochs,
+        num_train_epochs=effective_epochs,    # K-pair 扩展后联动得到的有效 epoch 数
         per_device_train_batch_size=args.per_device_train_batch_size,
         per_device_eval_batch_size=args.per_device_eval_batch_size,
         gradient_accumulation_steps=args.gradient_accumulation_steps,

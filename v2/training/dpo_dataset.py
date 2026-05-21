@@ -1,27 +1,33 @@
 """
-DPO 数据集:每行存一题的全部候选,运行时用 set_transform 每步动态采一个 pair。
+DPO 数据集:每题预采 K 个 (chosen, rejected) pair,物化为 N×K 行的静态 Dataset。
 
-输出每行(经过 transform 后):
+每行输出:
     {
-        "prompt":   str (### Problem ... ### Sketch\n),
+        "prompt":   str (### Problem ... ### Sketch\\n),
         "chosen":   str (sketch+code 拼接,即 response),
         "rejected": str
     }
 
+设计选择(2026-05-21):
+原版用 `set_transform` 做每步动态采样,但 trl 0.15 的 DPOTrainer 在 __init__ 时
+就用 `dataset.map()` 预 tokenize,产出 prompt_input_ids 等列;set_transform 是 runtime hook,
+会把 map 加上去的列影掉,导致 collator KeyError。
+
+改为静态 K-pair 扩展:
+- 预先对每题随机采 K 个 pair,展开成 N×K 行
+- TRL 标准 map 路径正常工作
+- K 由调用方控制;搭配 dpo_train.py 的"effective_epochs = E // K"联动,
+  整体训练量(N × K × effective_E)与原 dynamic 模式(N × E)等价
+
 trl DPOTrainer (0.11+) 接受 prompt/chosen/rejected 三个 string column,自己内部处理
 tokenization 和 ref_logp 计算。
-
-动态采样原理:HF Dataset.set_transform 在每次 __getitem__ 时调用,所以同一题
-跨 epoch 会拿到不同的 (chosen, rejected) 对。
 """
 from __future__ import annotations
 import json
 import random
-from typing import Literal
 
 from datasets import Dataset, disable_caching
 
-from ..data.prompts import TRAINING_TEMPLATE
 from .pair_builder import (
     PairThresholds, Task, sample_pair, task_yieldable,
 )
@@ -44,12 +50,17 @@ def build_dpo_dataset(
     merged_path: str,
     task: Task,
     thresholds: PairThresholds,
-    static: bool = False,
+    pairs_per_problem: int = 1,
     seed: int = 1,
 ) -> Dataset:
     """
-    读 merged.jsonl,过滤可构造该 task 偏好对的题。
-    static=False:set_transform 动态;static=True:生成一次性 (prompt,chosen,rejected) 列。
+    读 merged.jsonl,过滤可构造该 task 偏好对的题,每题预采 K=pairs_per_problem 个 pair。
+
+    pairs_per_problem=1: 每题 1 个固定 pair(经典静态;val 集用)
+    pairs_per_problem=K (K>1): 每题 K 个 pair(等效原 dynamic E=K;主跑 train 集用)
+
+    采样 with replacement(`sample_pair` 内部用 `rng.choice`),候选少的题不会异常。
+    seed 决定整次扩展的所有采样,同 seed 产出完全一致。
     """
     rows: list[dict] = []
     with open(merged_path, "r", encoding="utf-8") as f:
@@ -64,49 +75,22 @@ def build_dpo_dataset(
             })
     print(f"DPO[{task}]: kept {len(rows)} yieldable problems")
 
-    ds = Dataset.from_list(rows)
+    K = max(1, pairs_per_problem)
+    rng = random.Random(seed)
 
-    if static:
-        rng = random.Random(seed)
-
-        def _mat(row):
+    expanded: list[dict] = []
+    for row in rows:
+        for _ in range(K):
             pair = sample_pair(row["candidates"], task, thresholds, rng)
-            chosen, rejected = pair  # type: ignore[misc]
-            return {
+            if pair is None:
+                # 题级 task_yieldable 过滤已保证至少一对,理论上到不了
+                continue
+            chosen, rejected = pair
+            expanded.append({
                 "prompt": _build_prompt_part(row["question"]),
                 "chosen": _build_response_part(chosen["sketch"], chosen["code"]),
                 "rejected": _build_response_part(rejected["sketch"], rejected["code"]),
-            }
+            })
 
-        ds = ds.map(_mat, remove_columns=["question", "candidates"])
-        return ds
-
-    # 动态:set_transform 让每次访问都重抽
-    def _transform(batch):
-        n = len(batch["question"])
-        out_prompt = []
-        out_chosen = []
-        out_rejected = []
-        for i in range(n):
-            cands = batch["candidates"][i]
-            q = batch["question"][i]
-            pair = sample_pair(cands, task, thresholds)
-            if pair is None:
-                # 极少数情况(并发问题导致筛过的题在此处抽不出),退化为同份
-                first = cands[0]
-                out_prompt.append(_build_prompt_part(q))
-                out_chosen.append(_build_response_part(first["sketch"], first["code"]))
-                out_rejected.append(_build_response_part(first["sketch"], first["code"]))
-                continue
-            chosen, rejected = pair
-            out_prompt.append(_build_prompt_part(q))
-            out_chosen.append(_build_response_part(chosen["sketch"], chosen["code"]))
-            out_rejected.append(_build_response_part(rejected["sketch"], rejected["code"]))
-        return {
-            "prompt": out_prompt,
-            "chosen": out_chosen,
-            "rejected": out_rejected,
-        }
-
-    ds.set_transform(_transform)
-    return ds
+    print(f"DPO[{task}]: expanded to {len(expanded)} rows ({len(rows)} problems × K={K})")
+    return Dataset.from_list(expanded)

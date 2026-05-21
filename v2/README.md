@@ -218,6 +218,9 @@ deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
 # 配置:ZeRO-2 + CPU offload optim + precompute_ref_log_probs
 #   - TRL 禁止 ZeRO-3 + precompute,但不 precompute 又装不下 policy + ref 两个 3B
 #   - 解法:ZeRO-2 把 12GB Adam state 甩到 CPU,腾出 GPU 给 policy + ref;precompute 后释放 ref
+# --augment True 走 K-pair 静态扩展:每题预采 K=--pairs_per_problem(默认 = --num_train_epochs)
+#   个 pair,trainer 内部把 epoch 数缩成 max(1, E//K),总训练量等价原 dynamic 模式
+DS_SKIP_CUDA_CHECK=1 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \

@@ -198,6 +198,10 @@ deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
 #   - SFT 用的 ZeRO-3 在 DPO 上不行:TRL 禁止 ZeRO-3 + precompute_ref_log_probs 组合
 #   - 不 precompute 又装不下 policy + ref 两个 3B 模型 → 必须 precompute
 #   - 解法:ZeRO-2 把 12GB Adam state 甩到 CPU(240GB 主存),腾出 GPU 给 policy + ref
+# --augment True 走 K-pair 静态扩展:每题预采 K=--pairs_per_problem(默认 = --num_train_epochs)
+#   个 pair,trainer 内部把 epoch 数缩成 max(1, E//K),总训练量等价原 dynamic 模式
+# DS_SKIP_CUDA_CHECK=1 用于绕过 nvcc 13.0 vs torch cu128 的版本一致性 assert
+DS_SKIP_CUDA_CHECK=1 \
 PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True \
 deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --train_merged /data/work/out/datasets/train/merged.jsonl \
