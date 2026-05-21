@@ -78,6 +78,11 @@ def main():
         "--exec_workers", type=int, default=None,
         help="execution 阶段线程并发数,默认按 (cpu_count-4)/n_shards 推算",
     )
+    ap.add_argument(
+        "--do_timing", action="store_true",
+        help="执行阶段对全 pass 的解额外测稳定 runtime(CoV ≤ 0.1)。"
+             "Pilot 默认关(快);主跑要 QvS 信号必须开,代价 execution 慢 3-10×",
+    )
     args = ap.parse_args()
     assert 0 <= args.shard_id < args.n_shards, "shard_id 必须在 [0, n_shards) 内"
 
@@ -135,7 +140,7 @@ def main():
 
     backend.shutdown()
 
-    # 4) Execution (并发,pilot 不测时)
+    # 4) Execution(并发;do_timing 由 CLI 控制 —— pilot 默认关,主跑要 QvS 必须开)
     exec_path = os.path.join(args.out_dir, "exec.jsonl")
     # 让 default_exec_workers 按 n_shards 推算预算
     os.environ.setdefault("V2_N_SHARDS", str(args.n_shards))
@@ -143,7 +148,7 @@ def main():
         codes_path=codes_path,
         problems_by_id=problems_by_id,
         out_path=exec_path,
-        do_timing=False,
+        do_timing=args.do_timing,
         timeout_per_test=3.0,
         max_workers=args.exec_workers,
     )

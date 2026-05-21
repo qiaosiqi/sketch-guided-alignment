@@ -119,18 +119,18 @@ python -m v2.scripts.03_analyze_pilot --pilot_dir /data/work/out/pilot
 ### 2.3 全量采样(双卡 vllm DP,~6-12 小时)
 
 ```bash
-# train split
+# train split:--do_timing 是 QvS 必需,主跑必加(代价 execution 阶段慢 3-10×)
 bash v2/scripts/dp_sample.sh /data/work/out/sample_train \
     --problems_jsonl /data/work/out/apps/train.jsonl \
     --model_path /data/models/StarCoder2-3B \
     --n_problems 99999 --n_per_temp 100 \
-    --temps 0.6   # 或多温度,按 pilot 结论改
+    --temps 0.6 --do_timing   # 或多温度,按 pilot 结论改
 
 # val split 同理
 bash v2/scripts/dp_sample.sh /data/work/out/sample_val \
     --problems_jsonl /data/work/out/apps/val.jsonl \
     --model_path /data/models/StarCoder2-3B \
-    --n_problems 99999 --n_per_temp 100 --temps 0.6
+    --n_problems 99999 --n_per_temp 100 --temps 0.6 --do_timing
 ```
 
 > `dp_sample.sh` 会起 2 个 vLLM 进程各 pin 一张卡,题目对半切片,跑完 cat 合并产物到 OUT_DIR 下。中断重跑安全(每个 shard 子目录 append 写入)。

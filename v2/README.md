@@ -182,10 +182,11 @@ bash v2/scripts/dp_sample.sh /data/work/out/pilot \
 python -m v2.scripts.03_analyze_pilot --pilot_dir /data/work/out/pilot
 
 # 3) 全量主跑(配置依据 pilot 结果)
+# --do_timing 是 DPO-QvS 任务的必需输入,主跑必开;代价 execution 阶段慢 3-10× (稳定测时 CoV ≤ 0.1)
 bash v2/scripts/dp_sample.sh /data/work/out/main \
     --problems_jsonl /data/work/out/apps/train.jsonl \
     --model_path /data/models/StarCoder2-3B \
-    --n_problems 99999 --n_per_temp 100 --temps 0.6
+    --n_problems 99999 --n_per_temp 100 --temps 0.6 --do_timing
 
 # 4) GLM-4-Air 评分 (要 GLM_API_KEY 环境变量)
 export GLM_API_KEY=...
