@@ -110,6 +110,10 @@ def main():
     cfg = DPOConfig(
         output_dir=args.output_dir,
         beta=args.beta,
+        # 训练前一次性预算所有 ref_model logps,然后释放 ref_model 显存。
+        # 否则 5090 32GB 同时装不下 policy(ZeRO-3 切) + ref(全量未切) + 训练/eval 临时显存。
+        # ref_model 冻结,logps 在哪算都一样,研究语义零失真。
+        precompute_ref_log_probs=True,
         learning_rate=args.learning_rate,
         num_train_epochs=args.num_train_epochs,
         per_device_train_batch_size=args.per_device_train_batch_size,
