@@ -56,7 +56,10 @@ PY
 "$PIP" check
 
 echo "[3/5] 训练栈 (trl ≥ 0.11 是硬约束,其余跟它解析)"
-"$PIP" install "trl>=0.11" transformers accelerate peft deepspeed datasets
+# transformers 必须 <5:5.x 移除了 all_special_tokens_extended 等内部属性,
+# 同时 AutoTokenizer 的 fast/slow 选择行为也变了,vllm 0.10.x 在 init 时直接 AttributeError。
+# vllm 适配 transformers 5 之前都得卡在 4.x。
+"$PIP" install "trl>=0.11" "transformers<5" accelerate peft deepspeed datasets
 
 echo "    verify: trl 新版 API"
 "$ENV_PREFIX/bin/python" - <<'PY'

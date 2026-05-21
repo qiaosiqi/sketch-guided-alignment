@@ -17,6 +17,7 @@
 from __future__ import annotations
 import logging
 import os
+import traceback
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import List, Optional
@@ -167,12 +168,26 @@ def build_backend(
     model_path: str,
     dtype: str = "float16",
     prefer: str = "vllm",
+    allow_fallback: bool = False,
     **kwargs,
 ) -> Backend:
-    """先尝试 prefer,失败回退到 hf。"""
+    """构造采样后端。
+
+    `prefer="vllm"` 默认是 strict 的:vllm 起不来直接 raise,把 traceback 打全。
+    之所以默认严格,是吃过一次亏 —— 静默回退到 HF 会让性能掉 5–10×,
+    用户从日志里只看到一行 warning,等发现时已经浪费几个小时。
+    确实想容错就显式 `allow_fallback=True`(或干脆 `prefer="hf"`)。
+    """
     if prefer == "vllm":
         try:
             return VLLMBackend(model_path, dtype=dtype, **kwargs)
         except Exception as e:
-            log.warning(f"vLLM backend failed ({e!r}), falling back to HF.")
+            tb = traceback.format_exc()
+            if not allow_fallback:
+                log.error(f"vLLM backend failed and allow_fallback=False:\n{tb}")
+                raise RuntimeError(
+                    f"vLLM backend failed: {e!r}. "
+                    "Pass allow_fallback=True or prefer='hf' if degradation is acceptable."
+                ) from e
+            log.warning(f"vLLM backend failed; falling back to HF.\nTraceback:\n{tb}")
     return HFBackend(model_path, dtype=dtype)
