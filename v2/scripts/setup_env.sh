@@ -55,15 +55,21 @@ PY
 # pip check 把"X requires torch==Y"这类隐性回退一次性查出来;不通过就停。
 "$PIP" check
 
-echo "[3/5] 训练栈 (trl ≥ 0.11 是硬约束,其余跟它解析)"
+echo "[3/5] 训练栈 (trl 0.11-0.15 是硬约束,其余跟它解析)"
 # transformers 必须 <5:5.x 移除了 all_special_tokens_extended 等内部属性,
 # 同时 AutoTokenizer 的 fast/slow 选择行为也变了,vllm 0.10.x 在 init 时直接 AttributeError。
 # vllm 适配 transformers 5 之前都得卡在 4.x。
-"$PIP" install "trl>=0.11" "transformers<5" accelerate peft deepspeed datasets
+#
+# trl 必须 <0.16:0.16 起 DataCollatorForCompletionOnlyLM 被移除,1.x 大改 SFTTrainer/DPOTrainer
+# API surface。我们的 DynamicSFTCollator 继承自这个类,不降级无法 import。
+# 等以后整体重写 collator 走 SFTConfig(completion_only_loss=True) 再松上界。
+"$PIP" install "trl>=0.11,<0.16" "transformers<5" accelerate peft deepspeed datasets
 
-echo "    verify: trl 新版 API"
+echo "    verify: trl 关键导入(包括 0.16+ 移除的 DataCollatorForCompletionOnlyLM)"
 "$ENV_PREFIX/bin/python" - <<'PY'
-from trl import SFTConfig, DPOConfig  # 0.11+ 才有
+# 这三个一起 import 才能把"trl 太新"的版本溢出 ImportError 在装环境时就暴露,
+# 避免拖到训练阶段才发现。
+from trl import SFTConfig, DPOConfig, DataCollatorForCompletionOnlyLM
 import trl, transformers, accelerate, peft, deepspeed, datasets
 print(f"  trl={trl.__version__} transformers={transformers.__version__} "
       f"accelerate={accelerate.__version__} peft={peft.__version__} "
