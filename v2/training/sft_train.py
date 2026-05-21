@@ -117,7 +117,7 @@ def main():
         gradient_accumulation_steps=args.gradient_accumulation_steps,
         warmup_ratio=args.warmup_ratio,
         lr_scheduler_type="linear",
-        evaluation_strategy="epoch",
+        eval_strategy="epoch",      # transformers 4.46+ 把 evaluation_strategy 重命名为 eval_strategy
         save_strategy="epoch",
         save_total_limit=2,
         logging_strategy="epoch",
