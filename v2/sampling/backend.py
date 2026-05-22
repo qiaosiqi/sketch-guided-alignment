@@ -94,9 +94,21 @@ class VLLMBackend(Backend):
 
     def shutdown(self):
         try:
+            import gc
             import torch
+            # destroy_model_parallel 清理 vLLM 起的 NCCL 进程组 + EngineCore 后台进程
+            try:
+                from vllm.distributed.parallel_state import destroy_model_parallel
+                destroy_model_parallel()
+            except Exception:
+                pass
             del self.llm
+            gc.collect()
             torch.cuda.empty_cache()
+            # synchronize 确保所有 CUDA op 完成再 fork,
+            # 减少子进程继承"进行中的 CUDA 操作"的概率
+            if torch.cuda.is_available():
+                torch.cuda.synchronize()
         except Exception:
             pass
 

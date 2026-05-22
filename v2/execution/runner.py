@@ -12,6 +12,7 @@ run_one_solution(problem, code, timeout_per_test=3.0, time_total=False)
 """
 from __future__ import annotations
 import multiprocessing
+import os
 import sys
 import traceback
 from typing import Any
@@ -141,6 +142,10 @@ def _worker(
         "timing_mean": timing_mean,
         "timing_std": timing_std,
     })
+    # 子进程用 os._exit 跳过 Python atexit(含 torch/CUDA cleanup),
+    # 避免 fork 后继承的 CUDA context 在退出时卡住 ~30s/进程。
+    # os._exit 不在 reliability_guard 黑名单内,可安全调用。
+    os._exit(0)
 
 
 # ============================================================
@@ -184,7 +189,7 @@ def run_one_solution(
         ),
     )
     p.start()
-    hard_wall = timeout_per_test * len(problem.inputs) * (60 if do_timing else 2) + 10
+    hard_wall = timeout_per_test * len(problem.inputs) * (10 if do_timing else 2) + 10
     p.join(timeout=hard_wall)
     if p.is_alive():
         p.kill()
