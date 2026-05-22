@@ -119,8 +119,28 @@ def create_tempdir():
 _ORIGINAL = {}
 
 
-def reliability_guard():
-    """禁用大量危险 API。注意会污染当前进程,只在子进程里调用。"""
+def reliability_guard(maximum_memory_bytes: int = 4 * 1024 ** 3):
+    """禁用大量危险 API,并给子进程设硬内存墙。注意会污染当前进程,只在子进程里调用。
+
+    `maximum_memory_bytes` 默认 4 GiB —— APPS 解几乎都用不到这么多,而 BASE 模型
+    时常生成指数级开销的解(e.g. `[0] * 10**9`)能瞬间吃满 host RAM。24 个 worker
+    并发时只要其中一个不设墙就可能 OOM-kill 整个 shard。上游 human-eval 的
+    reliability_guard 默认就有这个,我们之前漏了。
+
+    必须在 `sys.modules["resource"] = None` 之前设 rlimit,否则 resource 模块被
+    nuke 之后就回不来了。
+    """
+    # ⚠️ rlimit 必须最先设,在 resource 模块被 nuke 之前
+    try:
+        import resource
+        # RLIMIT_AS 限制整个进程的虚拟内存(含 mmap),最有效
+        # RLIMIT_DATA 限制 heap 大小,作为兜底
+        resource.setrlimit(resource.RLIMIT_AS, (maximum_memory_bytes, maximum_memory_bytes))
+        resource.setrlimit(resource.RLIMIT_DATA, (maximum_memory_bytes, maximum_memory_bytes))
+        # 不设 RLIMIT_STACK:某些 APPS 解递归较深,栈不够会误杀正确解
+    except (ValueError, OSError, ImportError):
+        pass
+
     faulthandler.disable()
 
     import builtins
