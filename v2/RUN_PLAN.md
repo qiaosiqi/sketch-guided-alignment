@@ -10,7 +10,7 @@
 
 | Phase | 任务 | 状态 | 关键产物路径 |
 |-------|------|------|--------------|
-| 0 | BASE 评测(锚点) | ☐ 未跑 | `$EVALS/base/metrics.json` |
+| 0 | BASE 评测(锚点) | ☑ 完成(2026-05-23) | `$EVALS/base/metrics.json` |
 | 1a | 主采样 train | ☐ 未跑 | `$WORK/main_train/` |
 | 1b | 主采样 val | ☐ 未跑 | `$WORK/main_val/` |
 | 2a | GLM-4-Air 标注 train | ☐ 未跑 | `$WORK/main_train/scores.jsonl` |
@@ -117,13 +117,22 @@ tail -20 $EVALS/base/_shard0/stderr.log
 - [ ] shard 日志无 OOM / vLLM fallback
 - [ ] `exec.jsonl` 行数 ≈ test 题数 × 100(单 temp)
 
-### 结果日志(待回填)
+### 结果日志
 
 ```
-BASE pass@1     = _.___
-BASE pass@10    = _.___
-BASE mean_runtime = ____ms
+BASE pass@1           = 0.0108   (1.08%)
+BASE pass@10          = 0.0541   (5.41%)
+BASE mean_pass_ratio  = 0.1020   (10.20%)
+BASE n_problems       = 2998
+BASE samples/problem  = 99.67
 ```
+
+mean_runtime_ns 字段忽略 —— 本次 eval 不带 --do_timing,字段中是早期 --do_timing
+试跑残留的几条旧 exec 数据,无意义。论文只在训练后模型间比较 runtime。
+
+执行耗时:~35h(BUG-001 + BUG-002 修复后实测)。
+
+最终矩阵将填入 Phase 6。
 
 ---
 
@@ -131,29 +140,41 @@ BASE mean_runtime = ____ms
 
 **目的**:用 BASE 模型在 train + val 上生成 (sketch, code) 候选池,带 timing(QvS 必须)。
 
+**规模决定(2026-05-23)**:BASE eval 实测 ~35h(3000 题 × 100 样本无 timing)
+让人意识到 Phase 1 全量 + timing 会跑 4-5 天,风险过大。采用"减半 × 减半"方案:
+**`n_per_temp=50`,题数减半**,预计 Phase 1 ~30-40h。trade-off:全 pass 解可能变少
+(尤其 QvS 池子变薄),但 GvB / PvF 训练量仍充足。
+
 ### 1a) train 采样
 
 ```bash
+# 先算半题数
+HALF_TRAIN=$(( $(wc -l < $APPS/train.jsonl) / 2 ))
+echo "train half = $HALF_TRAIN"
+
 bash v2/scripts/dp_sample.sh $WORK/main_train \
     --problems_jsonl $APPS/train.jsonl \
     --model_path $MODEL \
-    --n_problems 99999 --n_per_temp 100 --temps 0.6 \
+    --n_problems $HALF_TRAIN --n_per_temp 50 --temps 0.6 \
     --do_timing
 ```
 
-在 tmux 里前台直接跑;离开按 `Ctrl-B D`。监控另开 pane:`tail -f $WORK/main_train/_shard0/stderr.log`。预计 ~12-16h。
+在 tmux 里前台直接跑;离开按 `Ctrl-B D`。监控另开 pane:`tail -f $WORK/main_train/_shard0/stderr.log`。预计 ~30-40h。
 
 ### 1b) val 采样
 
 ```bash
+HALF_VAL=$(( $(wc -l < $APPS/val.jsonl) / 2 ))
+echo "val half = $HALF_VAL"
+
 bash v2/scripts/dp_sample.sh $WORK/main_val \
     --problems_jsonl $APPS/val.jsonl \
     --model_path $MODEL \
-    --n_problems 99999 --n_per_temp 100 --temps 0.6 \
+    --n_problems $HALF_VAL --n_per_temp 50 --temps 0.6 \
     --do_timing
 ```
 
-预计 ~2-3h。
+预计 ~3-5h。
 
 ### ✋ 核查点 1
 
