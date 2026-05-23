@@ -11,11 +11,11 @@
 | Phase | 任务 | 状态 | 关键产物路径 |
 |-------|------|------|--------------|
 | 0 | BASE 评测(锚点) | ☑ 完成(2026-05-23) | `$EVALS/base/metrics.json` |
-| 1a | 主采样 train | ☐ 未跑 | `$WORK/main_train/` |
-| 1b | 主采样 val | ☐ 未跑 | `$WORK/main_val/` |
-| 2a | GLM-4-Air 标注 train | ☐ 未跑 | `$WORK/main_train/scores.jsonl` |
-| 2b | GLM-4-Air 标注 val | ☐ 未跑 | `$WORK/main_val/scores.jsonl` |
-| 3 | 合并 train + val | ☐ 未跑 | `$DATASETS/{train,val}/merged.jsonl` |
+| 1a | 主采样 train | ☑ 完成(2026-05-23,761 题×50 样本,98.6% runtime 覆盖) | `$WORK/main_train/` |
+| 1b | 主采样 val | ☑ 完成(2026-05-23,84 题×50 样本,98.2% runtime 覆盖) | `$WORK/main_val/` |
+| 2a | GLM-4-Air 标注 train | ☑ 完成(2026-05-23,99.99% parsable,pass-fail diff=1.83) | `$WORK/main_train/scores.jsonl` |
+| 2b | GLM-4-Air 标注 val | ☑ 完成(2026-05-23,100% parsable,pass-fail diff=1.44) | `$WORK/main_val/scores.jsonl` |
+| 3 | 合并 train + val | ☑ 完成(2026-05-23,train 760 题,val 84 题) | `$DATASETS/{train,val}/merged.jsonl` |
 | 4 | SFT-ALG-25 训练 | ☐ 未跑 | `$RUNS/sft_alg_top25/best` |
 | 5a | DPO-GvB(headline) | ☐ 未跑 | `$RUNS/dpo_gvb/best` |
 | 5b | DPO-PvF(baseline) | ☐ 未跑 | `$RUNS/dpo_pvf/best` |
