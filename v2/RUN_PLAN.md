@@ -16,11 +16,11 @@
 | 2a | GLM-4-Air 标注 train | ☑ 完成(2026-05-23,99.99% parsable,pass-fail diff=1.83) | `$WORK/main_train/scores.jsonl` |
 | 2b | GLM-4-Air 标注 val | ☑ 完成(2026-05-23,100% parsable,pass-fail diff=1.44) | `$WORK/main_val/scores.jsonl` |
 | 3 | 合并 train + val | ☑ 完成(2026-05-23,train 760 题,val 84 题) | `$DATASETS/{train,val}/merged.jsonl` |
-| 4 | SFT-ALG-25 训练 | ☐ 未跑 | `$RUNS/sft_alg_top25/best` |
-| 5a | DPO-GvB(headline) | ☐ 未跑 | `$RUNS/dpo_gvb/best` |
-| 5b | DPO-PvF(baseline) | ☐ 未跑 | `$RUNS/dpo_pvf/best` |
-| 5c | DPO-QvS(timing) | ☐ 未跑 | `$RUNS/dpo_qvs/best` |
-| 5d | DPO-ALL(fallback) | ☐ 未跑 | `$RUNS/dpo_all/best` |
+| 4 | SFT-ALG-25 训练 | ☑ 完成(2026-05-23,240 steps/86min,best=checkpoint-240,eval_loss=0.3992,acc=86.97%) | `$RUNS/sft_alg_top25/best` |
+| 5a | DPO-GvB(headline) | ☑ 完成(2026-05-24,236 steps/29min,eval_loss=0.520,eval_margins=+0.60,grad_norm末段51✓) | `$RUNS/dpo_gvb/best` |
+| 5b | DPO-PvF(baseline) | ☑ 完成(2026-05-24,best=ep1=ckpt-166,eval_loss=0.704,margins=+0.029;ep2+ trajectory 丢失) | `$RUNS/dpo_pvf/best` |
+| 5c | DPO-QvS(timing) | ☑ 完成(2026-05-24,best=ep3=ckpt-345,eval_loss=0.615,margins=+0.38,U 形 ep5 反弹) | `$RUNS/dpo_qvs/best` |
+| 5d | DPO-ALL(fallback) | ☑ 完成(2026-05-24,best=ep1=ckpt-167,eval_loss=0.71→1.23 恶化,负面对照) | `$RUNS/dpo_all/best` |
 | 6 | 5 模型评测 | ☐ 未跑 | `$EVALS/{sft_alg_top25,dpo_*}/metrics.json` |
 
 **约定**:勾 ☐→☑ 表示主进程完成;勾选人工核查点 (✋) 后才允许进下一阶段。
@@ -284,9 +284,14 @@ deepspeed --num_gpus 2 --module v2.scripts.06_train_sft \
     --output_dir $RUNS/sft_alg_top25 \
     --sort_by algo_final --top_p 25 --augment True \
     --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 16 \
     --ds_config v2/configs/ds_zero3_2gpu.json
 ```
+
+⚠️ `--per_device_eval_batch_size 1` 是 5090 32G 必须显式覆盖的 —— 脚本默认是 4,
+但 StarCoder2-3B logits 在 cross_entropy 里要 fp32 中间张量
+(`4 × 2048 × 49k × 4B ≈ 1.6 GiB`),eval batch=4 会 OOM。
 
 预计 ~6-10h。
 
@@ -308,12 +313,20 @@ for r in s['log_history'][-5:]: print(r)
 - [ ] `eval_loss` 走势单调下降或中段 plateau,无后段大幅反弹
 - [ ] 最终 `eval_loss < initial`
 
-### 结果日志(待回填)
+### 结果日志
 
 ```
-SFT best ckpt   = checkpoint-___
-SFT best eval_loss = _.___
+SFT best ckpt    = checkpoint-240
+SFT best eval_loss = 0.3992
+SFT token acc    = 86.97%
+SFT wall-clock   = 86min  (240 steps,  per_dev=1×accum=16×2gpu,augment=True)
 ```
+
+注:240 steps = 760 题 / 32 batch ≈ 24 步/epoch × 10 epoch。SFT 的
+`--augment True` 走 DynamicSFTCollator,**dataset 行数 = 题数(每题一行)**,
+每步从该题的 top-25% 候选池里随机采一个 (sketch, code)。10 epoch 后每题被看
+10 次,每次见到不同候选 —— 正则化,不死记单一 (sketch, code)。eval_loss 单调
+下降至 plateau,模型可用。
 
 ---
 
@@ -331,10 +344,23 @@ deepspeed --num_gpus 2 --module v2.scripts.07_train_dpo \
     --model_path $RUNS/sft_alg_top25/best \
     --output_dir $RUNS/dpo_$TASK \
     --task $TASK --augment True \
+    --num_train_epochs 50 \
+    --pairs_per_problem 10 \
     --per_device_train_batch_size 1 \
+    --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 8 \
     --ds_config v2/configs/ds_zero2_2gpu_offload.json
 ```
+
+⚠️ **`--pairs_per_problem 10` 必须显式覆盖** —— 默认 K=num_train_epochs,
+传 `--num_train_epochs 50` 会把 K 一起拉到 50,导致 effective_E 还是 1,只在
+末尾存 1 个 ckpt,没法看曲线、没法选中间最佳 ckpt。固定 K=10 让 effective_E=5,
+**总训练量同等**(94×10×5 = 4700 pair-visits),但能看 5 个 epoch 的 trajectory。
+
+⚠️ `--num_train_epochs 50` 是关键覆盖:默认 10 + 默认 K=10 联动出 effective_E=1,
+对小数据(94 GvB 题)只有 59 步,严重欠拟合(loss=4.3, grad_norm=217)。
+
+⚠️ `--per_device_eval_batch_size 1` 同 SFT,必须显式覆盖(默认 2 会 OOM)。
 
 ### 跑哪个就把上方的 `$TASK` 填实
 
@@ -367,14 +393,18 @@ for r in s['log_history']:
 - [ ] `eval_loss` 不发散
 - [ ] `best/` symlink 存在
 
-### 结果日志(待回填)
+### 结果日志
 
 ```
-dpo_gvb best ckpt / eval_loss = _____ / _.___
-dpo_pvf best ckpt / eval_loss = _____ / _.___
-dpo_qvs best ckpt / eval_loss = _____ / _.___
-dpo_all best ckpt / eval_loss = _____ / _.___
+dpo_gvb best ckpt / eval_loss = checkpoint-236 / 0.5203  (margins=+0.60, 单调收敛 ✓ headline)
+dpo_pvf best ckpt / eval_loss = checkpoint-166 / 0.7041  (margins=+0.029, ep1 peak)
+dpo_qvs best ckpt / eval_loss = checkpoint-345 / 0.6153  (margins=+0.38, ep3 peak,ep4-5 反弹)
+dpo_all best ckpt / eval_loss = checkpoint-167 / 0.7094  (margins=-0.004, eval_loss 0.71→1.23 恶化 ✗ 负面对照)
 ```
+
+观察:GvB >> QvS > PvF > ALL(val 阶段)。ALL 退化是预期 —— 混合 PvF/QvS/GvB 信号
+互相打架,且被 yieldable 最多的 PvF 主导。这正好支撑论文 thesis: focused signal
+> mixed signal。
 
 ---
 

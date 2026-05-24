@@ -40,16 +40,21 @@ done
 # 两个 shard 同时编译相同的 vllm graph 会抢同一份 torchinductor / triton 缓存,
 # 输的一方读到截断 pickle 会直接 crash。给每个 shard 独立 cache 子目录,
 # 不动 ~/.bashrc 里的父变量,仅在子进程里拼一层 shard{0,1}。
+# 同样原因隔离 VLLM_CACHE_ROOT(~/.cache/vllm/torch_compile_cache 也有竞态,
+# atomic-rename 时另一个 shard 清掉同目录,触发 FileNotFoundError → Engine init 失败)。
 TORCHINDUCTOR_BASE="${TORCHINDUCTOR_CACHE_DIR:-/data/cache/torchinductor}"
 TRITON_BASE="${TRITON_CACHE_DIR:-/data/cache/triton}"
+VLLM_BASE="${VLLM_CACHE_ROOT:-/data/cache/vllm}"
 mkdir -p "$TORCHINDUCTOR_BASE/shard0" "$TORCHINDUCTOR_BASE/shard1" \
-         "$TRITON_BASE/shard0" "$TRITON_BASE/shard1"
+         "$TRITON_BASE/shard0" "$TRITON_BASE/shard1" \
+         "$VLLM_BASE/shard0" "$VLLM_BASE/shard1"
 
 echo "[dp_sample] launching 2 shards into $OUT_DIR"
 
 CUDA_VISIBLE_DEVICES=0 \
 TORCHINDUCTOR_CACHE_DIR="$TORCHINDUCTOR_BASE/shard0" \
 TRITON_CACHE_DIR="$TRITON_BASE/shard0" \
+VLLM_CACHE_ROOT="$VLLM_BASE/shard0" \
 python -m v2.scripts.02_sample_pilot \
     --out_dir "$SHARD0_DIR" --shard_id 0 --n_shards 2 "$@" \
     > "$SHARD0_DIR/stdout.log" 2> "$SHARD0_DIR/stderr.log" &
@@ -58,6 +63,7 @@ PID0=$!
 CUDA_VISIBLE_DEVICES=1 \
 TORCHINDUCTOR_CACHE_DIR="$TORCHINDUCTOR_BASE/shard1" \
 TRITON_CACHE_DIR="$TRITON_BASE/shard1" \
+VLLM_CACHE_ROOT="$VLLM_BASE/shard1" \
 python -m v2.scripts.02_sample_pilot \
     --out_dir "$SHARD1_DIR" --shard_id 1 --n_shards 2 "$@" \
     > "$SHARD1_DIR/stdout.log" 2> "$SHARD1_DIR/stderr.log" &

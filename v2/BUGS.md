@@ -133,3 +133,106 @@ def reliability_guard(maximum_memory_bytes: int = 4 * 1024 ** 3):
 默认栈对 APPS 体量足够。
 
 **关联**: 必须和 BUG-001 修复一起部署,否则 BUG-001 修后就会触发 BUG-002。
+
+---
+
+## BUG-003: DPO/SFT trainer 不自动 resume,中断后重跑会从 step 0 开始
+
+**状态**: ⚠️ 已知,未修(影响有限,不阻塞主跑)
+
+**发现时间**: 2026-05-24(DPO-QvS checkpoint 写盘失败后重跑时观察到)
+
+**现象**:
+DPO-QvS 在 step 345 因磁盘满 ckpt 写坏。清磁盘后用同样命令重跑(`--output_dir`
+未变,checkpoint-115 / checkpoint-230 仍在目录里),期望 DeepSpeed/Trainer 自动从
+checkpoint-230 续训,**但实际从 step 0 重新跑**(`Train dataset reference log probs`
+重头算了一遍 920 batch,训练进度条显示 2/575)。
+
+**根本原因**:
+`v2/training/dpo_train.py` 和 `v2/training/sft_train.py` 调 `trainer.train()` 都
+没传 `resume_from_checkpoint` 参数,默认 False → trainer 不会探测已有 ckpt。
+
+**影响**:
+- 不影响研究语义(从 SFT/best 重头跑出的最终 ckpt 与续训等价,seed 相同)
+- 仅浪费时间:QvS 重头跑 ~80 min vs 续训 ~38 min(差 ~40 min)
+- 同样的 ckpt 名(如 checkpoint-115)会被新跑覆盖,不冲突
+
+**修复(待实施)**:
+
+`v2/training/dpo_train.py` 和 `v2/training/sft_train.py` 改 `trainer.train()` 调用:
+
+```python
+import glob
+ckpts = glob.glob(os.path.join(args.output_dir, "checkpoint-*"))
+trainer.train(resume_from_checkpoint=bool(ckpts))
+```
+
+或加 CLI 参数 `--resume_from_checkpoint`,默认 True。
+
+**触发条件**:任何中断后 + 同 output_dir 重跑(磁盘写盘失败、OOM、Ctrl-C 等)。
+
+**绕过方案**:删干净 output_dir 后再跑(放弃续训),或者手动改代码加 resume 参数。
+
+---
+
+## BUG-004: vLLM torch_compile_cache 跨 shard 竞态导致 Engine init 失败
+
+**状态**: ✅ 已修复(2026-05-24)
+
+**发现时间**: 2026-05-24(Phase 6 第一个 SFT eval 启动时)
+
+**现象**:
+`bash v2/scripts/dp_eval.sh ... --model_path .../sft_alg_top25/best ...`
+启动后 weights 加载成功、CUDA graphs 编译成功,但随后 vLLM 在 engine 初始化阶段
+报:
+
+```
+RuntimeError: Engine core initialization failed. See root cause above.
+Failed core proc(s): {}
+```
+
+shard1 stderr 真正的根因:
+
+```
+FileNotFoundError: [Errno 2] No such file or directory:
+'/home/ubuntu/.cache/vllm/torch_compile_cache/fc12fbd829/rank_0_0/.../.77107.132459528853312.tmp'
+```
+
+**根本原因**:
+
+`dp_eval.sh` 和 `dp_sample.sh` 双 shard 并发跑 vLLM,**两 shard 都默认写
+`~/.cache/vllm/torch_compile_cache/`**。vLLM 内部用 `rank_X_X` 子目录隔离 DP rank,
+但**两个 shard 都把自己看作 rank_0_0**(各自是独立 world),最终写同一个目录。
+
+`torch._inductor.codecache.write_atomic` 用 `tempfile.write → rename` 实现原子写。
+shard A 写 `.tmpX` 后准备 rename,shard B 在 `rank_0_0` 目录里做 cleanup 把
+shard A 的 `.tmpX` 删了(或换名了),shard A 的 rename 找不到源文件 → FileNotFoundError → AOTAutograd → Engine init 全部炸。
+
+之前 BASE eval 没炸,纯属运气(那次两 shard 编译时序错开)。任何一次模型权重变化(BASE → SFT)都会让两 shard 同时重新编译,触发竞态。
+
+**修复**:
+
+`v2/scripts/dp_eval.sh` 和 `v2/scripts/dp_sample.sh` 各加一层 `VLLM_CACHE_ROOT`
+shard 子目录隔离,与已有的 `TORCHINDUCTOR_CACHE_DIR` / `TRITON_CACHE_DIR` 一样:
+
+```bash
+VLLM_BASE="${VLLM_CACHE_ROOT:-/data/cache/vllm}"
+mkdir -p "$VLLM_BASE/shard0" "$VLLM_BASE/shard1"
+
+CUDA_VISIBLE_DEVICES=0 \
+TORCHINDUCTOR_CACHE_DIR="$TORCHINDUCTOR_BASE/shard0" \
+TRITON_CACHE_DIR="$TRITON_BASE/shard0" \
+VLLM_CACHE_ROOT="$VLLM_BASE/shard0" \
+python -m ... &
+```
+
+**清理已坏 cache**(可选,但强烈建议重跑前先做):
+
+```bash
+rm -rf ~/.cache/vllm/torch_compile_cache/
+```
+
+避免新 cache 路径有残留 partial 文件干扰。
+
+**关联**: 与 vllm/triton/torchinductor 三个独立缓存系统都需要 per-shard 隔离同一类
+问题。这次只剩 vllm 没隔离,补上后双 shard 共存彻底干净。
