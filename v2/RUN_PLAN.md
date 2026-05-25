@@ -21,7 +21,9 @@
 | 5b | DPO-PvF(baseline) | ☑ 完成(2026-05-24,best=ep1=ckpt-166,eval_loss=0.704,margins=+0.029;ep2+ trajectory 丢失) | `$RUNS/dpo_pvf/best` |
 | 5c | DPO-QvS(timing) | ☑ 完成(2026-05-24,best=ep3=ckpt-345,eval_loss=0.615,margins=+0.38,U 形 ep5 反弹) | `$RUNS/dpo_qvs/best` |
 | 5d | DPO-ALL(fallback) | ☑ 完成(2026-05-24,best=ep1=ckpt-167,eval_loss=0.71→1.23 恶化,负面对照) | `$RUNS/dpo_all/best` |
-| 6 | 5 模型评测 | ☐ 未跑 | `$EVALS/{sft_alg_top25,dpo_*}/metrics.json` |
+| 6 | 5 模型评测 | ◐ 1/5 完成(sft;dpo_gvb 中断于迁移) | `$EVALS/{sft_alg_top25,dpo_*}/metrics.json` |
+
+**迁移冻结点 2026-05-25**:科研经费调整,从 5090×2 迁到 4090(具体配置另开会话定)。冻结时 dpo_gvb eval 启动 ~3h,根据用户决定是否在 5090 跑完。其余 3 个 eval (pvf/qvs/all) 留到 4090 上跑。Phase 6 重启策略见 `v2/MIGRATION_HANDOFF.md`。
 
 **约定**:勾 ☐→☑ 表示主进程完成;勾选人工核查点 (✋) 后才允许进下一阶段。
 
@@ -444,17 +446,24 @@ done
 - [ ] **DPO-GvB > DPO-PvF** in pass@10(headline 命题)
 - [ ] DPO-QvS mean_runtime < SFT-ALG-25(QvS 卖点)
 
-### 最终结果矩阵(待回填)
+### 最终结果矩阵(部分回填)
 
 ```
-model              pass@1   pass@10  mean_rt(ms)
-base                _.___    _.___    _____
-sft_alg_top25       _.___    _.___    _____
-dpo_gvb             _.___    _.___    _____
-dpo_pvf             _.___    _.___    _____
-dpo_qvs             _.___    _.___    _____
-dpo_all             _.___    _.___    _____
+model              pass@1   pass@10  pass@100  mean_pass_ratio  n_problems
+base                0.0108   0.0541    _____         0.1020         2998       (5090, 2026-05-23)
+sft_alg_top25       0.0127   0.0530    0.1251        0.1173         2998       (5090, 2026-05-25)
+dpo_gvb             _.___    _.___     _____         _.___          ____       (5090 中断 / 4090 重跑)
+dpo_pvf             _.___    _.___     _____         _.___          ____       (4090)
+dpo_qvs             _.___    _.___     _____         _.___          ____       (4090)
+dpo_all             _.___    _.___     _____         _.___          ____       (4090)
 ```
+
+**SFT vs BASE 观察**:pass@1 +18% (0.0108 → 0.0127),pass@10 -2% (0.0541 → 0.0530),
+pass@100 仅 SFT 有(BASE eval 未跑 100 维)。SFT 仅模仿高分样本,没拿到 pairwise 信号,
+头部反而被高 entropy 探索能力弱化是合理的。真正头条要看 DPO-GvB。
+
+**SFT eval 实测**:26.5h on 5090×2(n_per_temp=100, temps=0.6, 2998 problems)。
+迁到 4090 后建议把 n_per_temp 降到 30 抢节奏(见 MIGRATION_HANDOFF)。
 
 ---
 
