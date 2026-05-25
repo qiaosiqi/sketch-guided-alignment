@@ -9,6 +9,13 @@
 #   source v2/scripts/env_4090.sh
 #   conda activate /root/shared-nvme/conda/envs/sketch4090
 
+# ---- 清掉 NGC 容器在 base shell 里硬钉的 PIP_CONSTRAINT ----
+# NGC 镜像 base 环境写死 PIP_CONSTRAINT=/etc/pip/constraint.txt,把 packaging/setuptools/
+# urllib3/idna/… 等传递依赖钉到 NVIDIA NGC 的老版本。conda activate 不会主动清它,
+# 任何忘加前缀的 pip install 都会把 setup_env.sh 协商出来的新版本降级回去
+# (实际遇过:packaging 26→23.2 触发 ray/wheel 版本冲突)。每次 source 此文件无脑清掉。
+unset PIP_CONSTRAINT
+
 # ---- 实验产物根目录(对应 RUN_PLAN.md 里的 $WORK 等) ----
 export WORK=/root/shared-nvme/work/out
 export APPS=$WORK/apps
