@@ -51,7 +51,7 @@ def main():
     ap.add_argument("--max_new_tokens_code", type=int, default=1024)
     ap.add_argument("--do_timing", action="store_true")
     ap.add_argument("--seed", type=int, default=1)
-    # 数据并行分片(对应 5090×2 拓扑)
+    # 数据并行分片(对应双卡拓扑,5090×2 / 4090×2 通用)
     ap.add_argument("--shard_id", type=int, default=0)
     ap.add_argument("--n_shards", type=int, default=1)
     ap.add_argument(

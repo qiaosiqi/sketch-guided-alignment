@@ -71,7 +71,7 @@ def main():
     ap.add_argument("--max_new_tokens_sketch", type=int, default=256)
     ap.add_argument("--max_new_tokens_code", type=int, default=1024)
     ap.add_argument("--seed", type=int, default=1)
-    # 数据并行分片:在 5090×2 上,两个进程各占一卡,各跑题目子集,产物事后 cat 合并
+    # 数据并行分片:在双卡(5090×2 / 4090×2)上,两个进程各占一卡,各跑题目子集,产物事后 cat 合并
     ap.add_argument("--shard_id", type=int, default=0, help="本进程负责的分片编号 [0, n_shards)")
     ap.add_argument("--n_shards", type=int, default=1, help="总分片数;1=不分片")
     ap.add_argument(

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Data-parallel 双卡 eval launcher(配合 5090 ×2)。
+# Data-parallel 双卡 eval launcher(5090 ×2 / 4090 ×2 通用)。
 #
 # 与 dp_sample.sh 同构:两个进程各占一卡跑 v2.evaluation.eval_sampling
 # 的一半 problems,跑完合并 jsonl,然后跑一次 v2.evaluation.metrics 算指标。

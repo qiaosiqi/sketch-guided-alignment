@@ -1,22 +1,26 @@
 #!/usr/bin/env bash
-# 5090 双卡(Blackwell sm_120)环境分阶段部署。
+# 双卡环境分阶段部署。同时适配 5090(Blackwell sm_120)和 4090(Ada sm_89)。
 #
 # 设计原则:只 pin 不让步的版本(torch 2.7+cu128 整套、vllm ≥ 0.9、trl ≥ 0.11),
 # 其余包交给 pip 反向约束自动解析。装错版本会直接跑不起来的才 pin。
 #
-# 关键陷阱:vllm 0.8.x 整支硬钉 torch==2.6.0(无 sm_120),所以 Blackwell 必须 vllm ≥ 0.9。
+# 关键陷阱:vllm 0.8.x 整支硬钉 torch==2.6.0(无 sm_120),所以为兼容 Blackwell 必须 vllm ≥ 0.9。
+# cu128 wheel 同时包含 sm_89 / sm_120 kernels,4090 直接复用同一套版本号即可,
+# 不必为了 Ada 单独退回 cu121 —— 那样 trl/transformers/vllm 的版本约束都要重新验。
 # 同时 torchvision/torchaudio 要和 torch 同源(同一 cu128 wheel),否则 transformers
 # lazy-import torchvision 时会因为 ABI 不匹配在 torchvision::nms 上炸。
 #
-# 用法:
-#   bash v2/scripts/setup_env.sh
-#   conda activate /data/conda/envs/sketch5090
+# 用法(4090 主机,落在 NVMe 数据盘):
+#   ENV_PREFIX=/root/shared-nvme/conda/envs/sketch4090 bash v2/scripts/setup_env.sh
+#   conda activate /root/shared-nvme/conda/envs/sketch4090
+# 用法(5090 主机,沿用旧默认):
+#   ENV_PREFIX=/data/conda/envs/sketch5090 bash v2/scripts/setup_env.sh
 #
 # 出错时:本脚本设了 -e,某一步失败会立刻退出,可从那一步往下手动重跑。
 
 set -euo pipefail
 
-ENV_PREFIX="${ENV_PREFIX:-/data/conda/envs/sketch5090}"
+ENV_PREFIX="${ENV_PREFIX:-/root/shared-nvme/conda/envs/sketch4090}"
 TORCH_INDEX="https://download.pytorch.org/whl/cu128"
 
 echo "[0/5] conda create (python=3.10) → $ENV_PREFIX"
@@ -25,21 +29,21 @@ conda create -p "$ENV_PREFIX" python=3.10 pip -y
 # 后续步骤都在新环境里跑;不用 `conda activate`(脚本里激活不稳),直接走 prefix 的 pip。
 PIP="$ENV_PREFIX/bin/pip"
 
-echo "[1/5] torch + torchvision + torchaudio 2.7 / cu128 (Blackwell sm_120 唯一可用 wheel)"
+echo "[1/5] torch + torchvision + torchaudio 2.7 / cu128 (Blackwell sm_120 必须;cu128 wheel 也含 sm_89 内核)"
 # 三个一起装,保证 ABI 同步:transformers lazy-import torchvision,不同步会在 nms 上炸。
 "$PIP" install --index-url "$TORCH_INDEX" \
     torch==2.7.0+cu128 torchvision==0.22.0+cu128 torchaudio==2.7.0+cu128
 
-echo "    verify: torch.cuda + sm_120"
+echo "    verify: torch.cuda + (sm_89 Ada 或 sm_120 Blackwell)"
 "$ENV_PREFIX/bin/python" - <<'PY'
 import torch
 assert torch.cuda.is_available(), "CUDA not available"
 cap = torch.cuda.get_device_capability()
-assert cap == (12, 0), f"expected sm_120, got sm_{cap[0]}{cap[1]}"
+assert cap in {(8, 9), (12, 0)}, f"expected sm_89 (Ada/4090) or sm_120 (Blackwell/5090), got sm_{cap[0]}{cap[1]}"
 print(f"  torch={torch.__version__}, device={torch.cuda.get_device_name()}, cap={cap}")
 PY
 
-echo "[2/5] vllm >=0.9,<0.11 (按 torch 2.7 编译的支线,Blackwell 真正能用的起点)"
+echo "[2/5] vllm >=0.9,<0.11 (按 torch 2.7 编译的支线;Blackwell 必须 ≥0.9,Ada 同样能用)"
 # 不加 --no-deps:vllm 运行时依赖很多,让 pip 解析。
 # 用范围而非精确版,留出 patch release 升级空间;装完回头核验 torch 没被换 + pip check。
 "$PIP" install "vllm>=0.9,<0.11"

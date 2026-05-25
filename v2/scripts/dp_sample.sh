@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Data-parallel 双卡采样 launcher(配合 5090 ×2)。
+# Data-parallel 双卡采样 launcher(5090 ×2 / 4090 ×2 通用)。
 #
 # 起两个进程,每个 pin 到一张卡,分别跑 problems 的偶数和奇数下标分片,
 # 跑完把三份产物(sketches/codes/exec)cat 合并到 $OUT_DIR 下。
