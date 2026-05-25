@@ -29,10 +29,12 @@ conda create -p "$ENV_PREFIX" python=3.10 pip -y
 # 后续步骤都在新环境里跑;不用 `conda activate`(脚本里激活不稳),直接走 prefix 的 pip。
 PIP="$ENV_PREFIX/bin/pip"
 
-echo "[1/5] torch + torchvision + torchaudio 2.7 / cu128 (Blackwell sm_120 必须;cu128 wheel 也含 sm_89 内核)"
-# 三个一起装,保证 ABI 同步:transformers lazy-import torchvision,不同步会在 nms 上炸。
+echo "[1/5] torch + torchvision 2.7 / cu128 (Blackwell sm_120 必须;cu128 wheel 也含 sm_89 内核)"
+# torch + torchvision 一起装,保证 ABI 同步:transformers lazy-import torchvision,不同步会在 nms 上炸。
+# 不装 torchaudio:PyTorch cu128 索引不发布带 +cu128 后缀的 torchaudio(它没那么强的 CUDA 耦合),
+# 我们整个 v2 代码库也没有任何地方 import torchaudio,留着只会引入版本协商麻烦。
 "$PIP" install --index-url "$TORCH_INDEX" \
-    torch==2.7.0+cu128 torchvision==0.22.0+cu128 torchaudio==2.7.0+cu128
+    torch==2.7.0+cu128 torchvision==0.22.0+cu128
 
 echo "    verify: torch.cuda + (sm_89 Ada 或 sm_120 Blackwell)"
 "$ENV_PREFIX/bin/python" - <<'PY'
