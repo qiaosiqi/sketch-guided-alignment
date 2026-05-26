@@ -93,23 +93,28 @@ def swallow_io(stdin_str: str | None = None):
 # ============================================================
 
 @contextlib.contextmanager
-def _chdir(root: str):
-    if root == ".":
-        yield
-        return
-    cwd = os.getcwd()
-    os.chdir(root)
-    try:
-        yield
-    finally:
-        os.chdir(cwd)
-
-
-@contextlib.contextmanager
 def create_tempdir():
-    with tempfile.TemporaryDirectory() as d:
-        with _chdir(d):
-            yield d
+    # reliability_guard 会把 os.chdir / shutil.rmtree 等置 None。本上下文管理器的
+    # 退出阶段(复位 cwd + 清临时目录)必须在 guard 生效之后执行,所以先抓住原引用、
+    # 用本地变量调用,避免 cleanup 时拿到 None 触发 TypeError 把整条结果糊成
+    # worker_crashed。同理不再用 tempfile.TemporaryDirectory —— 它的 __exit__ 会
+    # 调被 nullify 的 shutil.rmtree。
+    _chdir_fn = os.chdir
+    _rmtree_fn = shutil.rmtree
+    cwd = os.getcwd()
+    d = tempfile.mkdtemp()
+    _chdir_fn(d)
+    try:
+        yield d
+    finally:
+        try:
+            _chdir_fn(cwd)
+        except Exception:
+            pass
+        try:
+            _rmtree_fn(d, ignore_errors=True)
+        except Exception:
+            pass
 
 
 # ============================================================
