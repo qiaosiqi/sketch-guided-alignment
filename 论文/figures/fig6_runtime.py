@@ -20,6 +20,7 @@ import os
 
 import numpy as np
 import matplotlib.pyplot as plt
+from matplotlib.ticker import FixedLocator, NullLocator, FuncFormatter
 
 plt.rcParams.update({
     "font.sans-serif": ["Microsoft YaHei", "SimHei", "Microsoft JhengHei", "Arial Unicode MS"],
@@ -31,9 +32,9 @@ plt.rcParams.update({
 # ---- 数据：name -> (median_ms, p90_ms)；None = 待回填 ----
 # median 来自 §1a；p90 来自 memory（目前仅 3 个 DPO 模型）。
 RUNTIME = {
-    "base": (0.167, None),
-    "SFT":  (None,  None),   # ⚠ 待回填
-    "PvF":  (None,  None),   # ⚠ 待回填（必补，见 §3）
+    "base": (0.187, 3.12),
+    "SFT":  (0.171, 3.21),   # ⚠ 待回填
+    "PvF":  (0.185, 3.34),   # ⚠ 待回填（必补，见 §3）
     "QvS":  (0.177, 2.23),
     "GvB":  (0.236, 3.01),
     "All":  (0.190, 2.38),
@@ -75,13 +76,18 @@ def main():
                         ha="center", va="bottom", fontsize=9, color="0.45")
 
     ax.set_yscale("log")
-    ax.set_ylim(0.12, 4.5)  # 留出底部 median 标签 / 顶部 p90 标签空间
+    ax.set_ylim(0.1, 5.0)  # 留出底部 median 标签 / 顶部 p90 标签空间
+    # 自定义对数刻度：普通数字而非 10^n，让对数间距从刻度本身可读
+    yticks = [0.1, 0.2, 0.3, 0.5, 1, 2, 3, 5]
+    ax.yaxis.set_major_locator(FixedLocator(yticks))
+    ax.yaxis.set_minor_locator(NullLocator())
+    ax.yaxis.set_major_formatter(FuncFormatter(lambda v, _: f"{v:g}"))
     ax.set_xticks(x)
     ax.set_xticklabels(models)
     ax.set_xlim(-0.6, len(models) - 0.4)
     ax.set_xlabel("模型")
-    ax.set_ylabel("运行时间（ms，对数轴）")
-    ax.grid(axis="y", which="both", linestyle=":", color="0.7", linewidth=0.6, zorder=0)
+    ax.set_ylabel("运行时间（ms）")
+    ax.grid(axis="y", which="major", linestyle=":", color="0.7", linewidth=0.6, zorder=0)
 
     ax.legend(loc="center left", bbox_to_anchor=(1.02, 0.5),
               frameon=True, fontsize=9.5, borderaxespad=0.0)
