@@ -16,6 +16,7 @@ SCRIPTS = [
     "fig3_quality_vs_pass.py",
     "fig4_pareto_runtime.py",
     "fig5_failure.py",
+    "fig6_runtime.py",
 ]
 
 

@@ -116,6 +116,11 @@ C1 faithfulness / C2 time_complexity / C3 space_complexity / C4 readability / C5
 - **图型**：散点（点形状区分）+ Pareto 前沿黑色虚折线（脚本自动算前沿）；x=median_runtime（用 median，避免离群拖累），y=pass@1。
 - **数据**：§1a 的 pass@1 + median_runtime。⚠ **pvf 的 runtime 待回填**（见 §3）；脚本里 `POINTS["PvF"]=None` 会自动跳过并提示，回填后填数值即自动重算前沿。
 
+### 图 F（多目标节）— 运行时间 median↔p90 区间图　`fig6_runtime.py`
+- **讲什么**：runtime 只在 pass_ratio==1.0 的解上测（反复测到 CoV≤0.1）；中位=典型耗时、p90=长尾。QvS/All 中位最低，GvB 略高但同量级。
+- **图型**：区间棒棒糖图，每模型一条 median↔p90 竖线，median 空心圆、p90 实心方，对数 y 轴。
+- **数据**：median 来自 §1a；p90 来自 memory（目前仅 QvS/GvB/All）。⚠ **SFT、PvF 的 median/p90 + base 的 p90 待回填**（见 §3）；脚本里对应 `None` 会自动跳过并在底部标“待回填”。
+
 ### 图 E（机制）— failure-mode 分组柱状　`fig5_failure.py`
 - **讲什么**：GvB compile_error 最低、all hard_wall_timeout 最低 → 质量信号的执行层证据（抗循环论证）。
 - **图型**：分组柱状，x=失败类型，4 个 DPO 模型用 灰度+纹理区分，柱顶标数值。
@@ -173,7 +178,8 @@ python -m v2.scripts.summarize_evals --evals_dir $EVALS --out $EVALS/summary.jso
 - 图 C：`fig3_quality_vs_pass.py` → `fig3_quality_vs_pass.{pdf,png}`
 - 图 D：`fig4_pareto_runtime.py` → `fig4_pareto_runtime.{pdf,png}`
 - 图 E：`fig5_failure.py` → `fig5_failure.{pdf,png}`
-- 一键全跑：`python make_all.py`（依次跑上面五个脚本）
+- 图 F：`fig6_runtime.py` → `fig6_runtime.{pdf,png}`
+- 一键全跑：`python make_all.py`（依次跑上面六个脚本）
 
 ## 5. 结果章节叙事骨架
 
