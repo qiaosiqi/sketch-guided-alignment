@@ -9,6 +9,7 @@
 [![DPO](https://img.shields.io/badge/Alignment-DPO-6C5CE7)](https://arxiv.org/abs/2305.18290)
 [![Dataset](https://img.shields.io/badge/Benchmark-APPS-2F80ED)](https://github.com/hendrycks/apps)
 [![Base model](https://img.shields.io/badge/Base_Model-StarCoder2--3B-FCC624)](https://huggingface.co/bigcode/starcoder2-3b)
+[![License](https://img.shields.io/badge/License-AGPL--3.0--only-663399)](LICENSE)
 
 </div>
 
@@ -171,17 +172,12 @@ Evaluation artifacts report `pass@1/10/100`, mean partial-credit pass ratio, mea
 - DeepSpeed ZeRO-3 offload is configured for constrained single-GPU training.
 - No secrets, datasets, model weights, or generated checkpoints are committed.
 
-## Attribution
+## License and provenance
 
-This work builds on:
+The original `v2/` framework is licensed under
+[`AGPL-3.0-only`](LICENSE). The retained Code-Optimise reference
+implementation in `sketch-guided-alignment/` remains under
+[`Apache-2.0`](sketch-guided-alignment/LICENSE).
 
-```bibtex
-@article{gee2024code,
-  title   = {Code-Optimise: Self-Generated Preference Data for Correctness and Efficiency},
-  author  = {Gee, Leonidas and Gritta, Milan and Lampouras, Gerasimos and Iacobacci, Ignacio},
-  journal = {arXiv preprint arXiv:2406.12502},
-  year    = {2024}
-}
-```
-
-The baseline implementation is retained for comparison and attribution. The `v2/` framework contains the sketch-guided, partial-credit, multi-objective extension developed in this repository.
+See [`LICENSING.md`](LICENSING.md) for the exact file-level scope and
+[`NOTICE`](NOTICE) for the required upstream provenance.

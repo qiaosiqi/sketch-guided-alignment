@@ -1,0 +1,20 @@
+Sketch-Guided Multi-Objective Alignment
+Copyright (C) 2026 Siqi Qiao
+
+The original implementation in the v2/ directory and the original
+project-level documentation are licensed under the GNU Affero General Public
+License, Version 3 only (AGPL-3.0-only).
+
+The sketch-guided-alignment/ directory preserves a reference implementation
+derived from Code-Optimise:
+
+  Code-Optimise: Self-Generated Preference Data for Correctness and Efficiency
+  Leonidas Gee, Milan Gritta, Gerasimos Lampouras, and Ignacio Iacobacci
+  https://github.com/huawei-noah/HEBO/tree/Code_Optimise
+
+That reference implementation remains licensed under the Apache License,
+Version 2.0. Copyright and attribution rights in the upstream work remain
+with their respective owners and contributors.
+
+This NOTICE file is informational and does not modify the terms of either
+license.
