@@ -2,7 +2,7 @@
 
 第二版框架,在原 `sketch-guided-alignment/` 论文方法基础上做以下扩展:
 
-1. **数据集换 APPS Competition+Interview**(替代 MBPP),约 2360 训练题
+1. **数据集换 APPS Interview**(替代 MBPP);pilot 显示 Competition 难度的有效偏好信号过于稀疏,因此主实验只保留 Interview
 2. **Partial credit 主信号**:`pass_ratio ∈ [0,1]` 替代二元 pass/fail
 3. **两段式采样,一段式训练**:采样时分别生成 sketch 和 code(各自评分更准),训练时拼成一段式格式
 4. **多维度评分**:sketch 4 维 + code 5 维,各 0-10,加权求总分
@@ -22,7 +22,7 @@
 | 输出长度 | 1024 tokens | 超 10% 截断再升 2048 |
 | `θ_high` (HvL 高分阈值) | 0.7 | pass_ratio 高于此算 high |
 | `θ_low` (HvL 低分阈值) | 0.3 | pass_ratio 低于此算 low |
-| `θ_pass_gvb` | 0.8 | GvB 双方都得满足的最低 pass_ratio |
+| `θ_pass_gvb` | 0.5 | GvB 双方都得满足的最低 pass_ratio;由 pilot 分布调整 |
 | `τ` (GvB 算法分阈值) | 6.0 | 总分 ≥ τ 为 Good,< τ 为 Bad |
 | Sketch / Code 权重 | 0.4 / 0.6 | `final = 0.4·mean(S) + 0.6·mean(C)` |
 | Train/Val split | 9:1 (在 APPS train 内) | 随机划分,固定 seed |
@@ -37,9 +37,9 @@ APPS raw
    │
    ▼ data/apps_loader.py          ──→ 统一 schema(题目 + IO 格式 + 测试用例)
    │
-   ▼ sampling/sketch_sampler.py   ──→ 每题 N 个 sketch
+   ▼ sampling/sampler.py          ──→ 每题 N 个 sketch
    │
-   ▼ sampling/code_sampler.py     ──→ 每个 sketch 配 1 个 code(或采多个)
+   ▼ sampling/sampler.py          ──→ 每个 sketch 配 1 个 code(或采多个)
    │
    ▼ execution/runner.py          ──→ 执行,得 pass_ratio + runtime(若全 pass)
    │
@@ -95,7 +95,7 @@ v2/
 - [x] SFT (Phase 5a,trl 0.11+,DynamicSFTCollator)
 - [x] DPO (Phase 5b,HvL/QvS/GvB/ALL,动态 pair 采样)
 - [x] Evaluation (pass@k strict + mean_pass_ratio + runtime + algo_score)
-- [ ] Sanity check + smoke tests
+- [x] Offline smoke-test suite for data, execution, preference-pair, and evaluation utilities
 
 ---
 
